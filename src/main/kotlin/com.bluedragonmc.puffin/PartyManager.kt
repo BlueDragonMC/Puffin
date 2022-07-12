@@ -92,6 +92,49 @@ object PartyManager {
                 }
             }
         }
+
+        client.subscribe(PartyTransferMessage::class) { message ->
+            val party = partyOf(message.oldOwner)
+            if (party == null || party.leader != message.oldOwner) {
+                client.publish(SendChatMessage(message.oldOwner, "<red>You must be the leader of a party to do this."))
+                return@subscribe
+            }
+            if (!party.members.contains(message.newOwner)) {
+                client.publish(
+                    SendChatMessage(
+                        message.oldOwner,
+                        "<red>That player is not in the party! Make sure you typed their name correctly."
+                    )
+                )
+                return@subscribe
+            }
+            party.leader = message.newOwner
+            party.members.forEach {
+                client.publish(
+                    SendChatMessage(
+                        it, "\n<yellow>Party ownership has been transferred to <aqua>${message.newOwner}<yellow>.\n"
+                    )
+                )
+            }
+        }
+
+        client.subscribe(PartyWarpMessage::class) { message ->
+            val emptySlots = GameStateManager.getEmptySlots(message.instanceId)
+            val party = partyOf(message.partyOwner) ?: return@subscribe
+            // TODO account for party members besides the leader already being in the game. currently this is not possible
+            if (party.members.size-1 > emptySlots) {
+                client.publish(
+                    SendChatMessage(
+                        message.partyOwner, "\n<red>There is not enough space in this game for your entire party!</red>\n"
+                    )
+                )
+                return@subscribe
+            }
+            party.members.forEach {
+                if (party.leader != it) client.publish(SendPlayerToInstanceMessage(it, message.instanceId))
+            }
+        }
+
         client.subscribe(PartyChatMessage::class) { message ->
             val party = partyOf(message.player)
             if(party != null) {
@@ -104,6 +147,6 @@ object PartyManager {
         }
     }
 
-    data class Party(val members: MutableList<UUID>, val invitations: MutableMap<UUID, Timer>, val leader: UUID)
+    data class Party(val members: MutableList<UUID>, val invitations: MutableMap<UUID, Timer>, var leader: UUID)
 
 }

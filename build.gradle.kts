@@ -16,7 +16,7 @@ repositories {
 
 dependencies {
     testImplementation(kotlin("test"))
-    implementation("com.github.bluedragonmc:messages:5d3dd0d240")
+    implementation("com.github.bluedragonmc:messages:37dc8e3")
     implementation("com.github.bluedragonmc:messagingsystem:2836a1f6f3")
     implementation("ch.qos.logback:logback:0.5")
     implementation("ch.qos.logback:logback-classic:1.2.11")
