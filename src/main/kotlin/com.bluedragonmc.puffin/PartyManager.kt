@@ -12,7 +12,7 @@ object PartyManager {
     private val parties = mutableSetOf<Party>()
     private fun partyOf(player: UUID) = parties.find { player in it.members }
     private fun createParty(leader: UUID) =
-        Party(mutableListOf(), mutableMapOf(), leader).also { parties.add(it) }
+        Party(mutableListOf(leader), mutableMapOf(), leader).also { parties.add(it) }
 
     private fun sendInvitationMessage(player: UUID, partyOwner: UUID) {
         client.publish(
