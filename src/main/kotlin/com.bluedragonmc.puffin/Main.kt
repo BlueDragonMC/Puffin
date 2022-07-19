@@ -13,5 +13,6 @@ fun main() {
     InstanceManager.start(client)
     GameStateManager.start(client)
     PartyManager.start(client)
+    DockerContainerManager.start(client)
     logger.info("Fully initialized.")
 }
