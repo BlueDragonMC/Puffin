@@ -2,8 +2,7 @@ package com.bluedragonmc.puffin
 
 import com.bluedragonmc.messagingsystem.AMQPClient
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.HostConfig
+import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DefaultDockerClientConfig
 import com.github.dockerjava.core.DockerClientImpl
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient
@@ -12,6 +11,7 @@ import org.apache.commons.compress.archivers.tar.TarFile
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.apache.commons.io.IOUtils
+import org.apache.commons.lang3.RandomStringUtils
 import org.slf4j.LoggerFactory
 import java.io.*
 import java.net.URI
@@ -46,19 +46,38 @@ object DockerContainerManager {
 
     private lateinit var puffinNetworkId: String
 
+    private val worldsFolder = File("worlds") //TODO this does not work while running in a Docker container; the absolute path must be specified, probably with an env variable.
+
     /**
      * The number of containers to maintain per repository.
      * If there are not enough containers of this type, more will
-     * be created every 30 seconds until the threshold is reached.
+     * be created every 10 seconds until the threshold is reached.
      */
     private var numContainersByLabel = listOf(
-        DockerImageType("Server", 2),
-        DockerImageType("Komodo", 1)
+        ContainerMeta(
+            "Komodo",
+            minimum = 1,
+            // expose port 25565 to the host system
+            portBindings = listOf(PortBinding(Ports.Binding.bindIpAndPort("0.0.0.0", 25565), ExposedPort.tcp(25565)))
+        ),
+        ContainerMeta(
+            "Server",
+            minimum = 2,
+            // expose port 25565 to other containers
+            exposedPorts = listOf(ExposedPort.tcp(25565)),
+            // mount the `worlds` folder in the container so maps can be used
+            // Note: read-only mode can't be used because Hephaistos relies on a RandomAccessFile which is initialized with write privileges.
+            mounts = listOf(Mount().withSource(worldsFolder.absolutePath).withTarget("/server/worlds/").withType(MountType.BIND))
+        )
     )
 
-    data class DockerImageType(val label: String, val minimumRequiredContainers: Int, val imageName: () -> String) {
-        constructor(repo: String, minimum: Int) : this(getVersionLabel(repo), minimum, { getMostRecentTag(repo) })
-    }
+    data class ContainerMeta(
+        val repo: String,
+        val minimum: Int,
+        val portBindings: List<PortBinding> = emptyList(),
+        val exposedPorts: List<ExposedPort> = emptyList(),
+        val mounts: List<Mount> = emptyList()
+    )
 
     /**
      * Get the Docker image tag for a specific repository and version
@@ -103,7 +122,7 @@ object DockerContainerManager {
             }
         }
 
-        fixedRateTimer("Docker Container Monitoring", daemon = true, period = 30_000) {
+        fixedRateTimer("Docker Container Monitoring", daemon = true, period = 10_000) {
 
             val containers = docker.listContainersCmd().exec()
 
@@ -136,13 +155,15 @@ object DockerContainerManager {
             }
 
             // Make sure there are enough of each container type to satisfy the minimums from [numContainersByLabel]
-            for((requiredLabel, minimum, imageName) in numContainersByLabel) {
+            for(containerType in numContainersByLabel) {
+                val requiredLabel = getVersionLabel(containerType.repo)
                 val serverContainers = containers.count {
                     it.labels.containsKey(requiredLabel)
                 }
-                if (serverContainers < minimum) {
-                    logger.info("There are only $serverContainers containers with label $requiredLabel, but $minimum are required. Starting another.")
-                    startContainer(imageName(), UUID.randomUUID())
+                if (serverContainers < containerType.minimum) {
+                    logger.info("There are only $serverContainers containers with label $requiredLabel, but ${containerType.minimum} are required. Starting another.")
+                    startContainer(containerType, UUID.randomUUID())
+                    return@fixedRateTimer // Only start one container per cycle, no matter the type
                 }
             }
         }
@@ -165,13 +186,30 @@ object DockerContainerManager {
      * and is named after the [containerId].
      * The container is started immediately after it is created.
      */
-    private fun startContainer(repository: String, containerId: UUID) {
+    private fun startContainer(containerMeta: ContainerMeta, containerId: UUID) {
+        val repository = containerMeta.repo
         logger.info("Starting new container with containerId=$containerId")
-        val response = docker.createContainerCmd(getMostRecentTag(repository))
+        var velocitySecret = SavedProperties.getString("velocity_secret")
+        if(velocitySecret == null) {
+            logger.error("No velocity secret was found in puffin.properties, creating a random one...")
+            velocitySecret = RandomStringUtils.randomAlphanumeric(128)
+            SavedProperties.setString("velocity_secret", velocitySecret)
+            SavedProperties.save()
+        }
+        val image = getMostRecentTag(repository)
+        logger.info("Creating new container with repository $repository and image $image...")
+        val response = docker.createContainerCmd(image)
             .withName(containerId.toString()) // container name
-            .withEnv("container_id", containerId.toString()) // pass containerId to the program in the container
+            .withEnv(
+                "container_id=$containerId", // pass containerId to the program in the container
+                "velocity_secret=$velocitySecret", // pass the Velocity modern forwarding secret to the container
+            )
+            .withExposedPorts(containerMeta.exposedPorts)
             .withHostConfig(HostConfig.newHostConfig()
-                .withNetworkMode(puffinNetworkId)) // put this container on the same network, so it can access the DB and messaging
+                .withNetworkMode(puffinNetworkId)
+                .withPortBindings(containerMeta.portBindings)
+                .withMounts(containerMeta.mounts)
+            ) // put this container on the same network, so it can access the DB and messaging
             .exec()
         response.warnings?.forEach {
             logger.warn(it)
