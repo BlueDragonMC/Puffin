@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "1.7.10"
+    id("com.github.johnrengelman.shadow") version "7.1.2"
     application
 }
 
@@ -34,4 +35,10 @@ tasks.withType<KotlinCompile> {
 
 application {
     mainClass.set("com.bluedragonmc.puffin.MainKt")
+}
+
+tasks.jar {
+    manifest {
+        attributes["Main-Class"] = "com.bluedragonmc.puffin.MainKt"
+    }
 }
