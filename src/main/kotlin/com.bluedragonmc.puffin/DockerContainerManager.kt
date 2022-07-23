@@ -1,5 +1,7 @@
 package com.bluedragonmc.puffin
 
+import com.bluedragonmc.messages.ReportErrorMessage
+import com.bluedragonmc.messages.RequestUpdateMessage
 import com.bluedragonmc.messagingsystem.AMQPClient
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
@@ -46,14 +48,32 @@ object DockerContainerManager {
 
     private lateinit var puffinNetworkId: String
 
-    private val worldsFolder = File("worlds") //TODO this does not work while running in a Docker container; the absolute path must be specified, probably with an env variable.
+    private val worldsFolder =
+        File("worlds") //TODO this does not work while running in a Docker container; the absolute path must be specified, probably with an env variable.
 
     /**
      * The number of containers to maintain per repository.
      * If there are not enough containers of this type, more will
      * be created every 10 seconds until the threshold is reached.
      */
-    private var numContainersByLabel = listOf(
+    private var numContainersByLabel = listOf<ContainerMeta>(
+        DockerHubContainerMeta(
+            "library",
+            "rabbitmq",
+            "3.10",
+            minimum = 1,
+            exposedPorts = listOf(ExposedPort.tcp(5672)),
+            portBindings = listOf(PortBinding(Ports.Binding.bindIpAndPort("0.0.0.0", 5672), ExposedPort.tcp(5672)))
+        ),
+        DockerHubContainerMeta(
+            "library",
+            "mongo",
+            "5.0.9",
+            minimum = 1,
+            exposedPorts = listOf(ExposedPort.tcp(27017)),
+            portBindings = listOf(PortBinding(Ports.Binding.bindIpAndPort("0.0.0.0", 27017), ExposedPort.tcp(27017))),
+            mounts = listOf(Mount().withType(MountType.VOLUME).withTarget("/data/db").withSource("bluedragon_puffin_mongodb_data"))
+        ),
         ContainerMeta(
             "Komodo",
             minimum = 1,
@@ -68,26 +88,81 @@ object DockerContainerManager {
             // mount the `worlds` folder in the container so maps can be used
             // Note: read-only mode can't be used because Hephaistos relies on a RandomAccessFile which is initialized with write privileges.
             mounts = listOf(Mount().withSource(worldsFolder.absolutePath).withTarget("/server/worlds/").withType(MountType.BIND))
-        )
+        ),
+//        ThirdPartyContainerMeta(
+//            "ghcr.io/luckperms/luckperms@sha256",
+//            "6f60aaf111e31b27af805e49db87eade623a986493e72118788d864dbccd9ebe",
+//            minimum = 1,
+//            exposedPorts = listOf(ExposedPort.tcp(3000))
+//        )
     )
 
-    data class ContainerMeta(
-        val repo: String,
+    open class ContainerMeta(
+        private val repo: String,
         val minimum: Int,
         val portBindings: List<PortBinding> = emptyList(),
         val exposedPorts: List<ExposedPort> = emptyList(),
         val mounts: List<Mount> = emptyList()
-    )
+    ) {
+        /**
+         * Get the Docker image tag for a specific repository using the latest version
+         */
+        internal open fun getMostRecentTag() = getTag(repo, getMostRecentVersion(repo) ?: "latest")
+        open fun count(containers: List<Container>) = containers.count { it.labels.containsKey(getVersionLabel(repo)) }
+        fun getVersionLabel() = getVersionLabel(repo)
+
+        open fun onStarted() {}
+        open fun getHostName(containerId: String): String = containerId
+    }
+
+    open class ThirdPartyContainerMeta(
+        private val image: String,
+        open val version: String,
+        minimum: Int,
+        portBindings: List<PortBinding> = emptyList(),
+        exposedPorts: List<ExposedPort> = emptyList(),
+        mounts: List<Mount> = emptyList()
+    ) : ContainerMeta("", minimum, portBindings, exposedPorts, mounts) {
+        override fun getMostRecentTag() = "$image:$version"
+
+        override fun count(containers: List<Container>): Int = containers.count { it.image == imageId }
+
+        open var imageId: String? = null
+            get() {
+                if (field == null) {
+                    field = docker.listImagesCmd().exec().find { it.repoDigests?.contains(version) == true }?.id
+                }
+                return field
+            }
+    }
+
+    class DockerHubContainerMeta(
+        private val userName: String = "library",
+        private val imageName: String, // "rabbitmq"
+        private val tag: String, // "latest"
+        minimum: Int,
+        portBindings: List<PortBinding> = emptyList(),
+        exposedPorts: List<ExposedPort> = emptyList(),
+        mounts: List<Mount> = emptyList()
+    ) : ThirdPartyContainerMeta("", "", minimum, portBindings, exposedPorts, mounts) {
+        override fun getMostRecentTag(): String = "$userName/$imageName"
+        override val version = tag
+
+        override var imageId: String? = null
+            get() {
+                if (field == null) {
+                    field = docker.listImagesCmd().exec().find { it.repoTags?.contains("$imageName:$tag") == true }?.id
+                }
+                return field
+            }
+
+        override fun getHostName(containerId: String): String = imageName
+    }
 
     /**
      * Get the Docker image tag for a specific repository and version
      */
     private fun getTag(repo: String, version: String) = "$GITHUB_USER/$repo:$version".lowercase()
-
-    /**
-     * Get the Docker image tag for a specific repository using the latest version
-     */
-    private fun getMostRecentTag(repo: String) = getTag(repo, getMostRecentVersion(repo) ?: "latest")
 
     /**
      * Get the latest version of a repository from the properties file.
@@ -96,6 +171,7 @@ object DockerContainerManager {
     private fun getMostRecentVersion(repo: String): String? {
         return SavedProperties.getString("latest_version_$repo")
     }
+
     private fun setMostRecentVersion(repo: String, commit: String) {
         SavedProperties.setString("latest_version_$repo", commit)
         SavedProperties.save()
@@ -105,9 +181,14 @@ object DockerContainerManager {
     /**
      * Get the label that is added to a Docker image when it is built to specify the version of the repository it is running.
      */
-    private fun getVersionLabel(repository: String) = "com.bluedragonmc.${repository.lowercase()}.version"
+    private fun getVersionLabel(repository: String) = "com.bluedragonmc.${
+        repository.lowercase()
+            .replace('/', '_')
+            .replace('.', '_')
+            .replace('@', '/')
+    }.version"
 
-    fun start(client: AMQPClient) {
+    fun start() {
 
         // Connect to Docker via Unix Sockets to create and manage containers
         val config = DefaultDockerClientConfig.Builder().withDockerHost("unix:///var/run/docker.sock").build()
@@ -115,14 +196,14 @@ object DockerContainerManager {
         docker = DockerClientImpl.getInstance(config, httpClient)
         logger.info("Connected to Docker.")
 
-        for((repo, defaultBranch) in repositoriesToVersionCheck) {
+        for ((repo, defaultBranch) in repositoriesToVersionCheck) {
             if (getMostRecentVersion(repo).isNullOrBlank()) {
                 logger.warn("No latest version information for $repo was found. Gathering latest version...")
                 fetchLatestVersion(repo, defaultBranch)
             }
         }
 
-        fixedRateTimer("Docker Container Monitoring", daemon = true, period = 10_000) {
+        fixedRateTimer("Docker Container Monitoring", daemon = false, period = 8_000) {
 
             val containers = docker.listContainersCmd().exec()
 
@@ -146,8 +227,8 @@ object DockerContainerManager {
             }
 
             containers.forEach { container ->
-                if(requiredNetworkAccess.contains(container.image)) {
-                    if(container.networkSettings?.networks?.containsKey(PUFFIN_NETWORK_NAME) == false) {
+                if (requiredNetworkAccess.contains(container.image)) {
+                    if (container.networkSettings?.networks?.containsKey(PUFFIN_NETWORK_NAME) == false) {
                         logger.info("Connecting container ${container.image}/${container.id} to network $PUFFIN_NETWORK_NAME (id: $puffinNetworkId).")
                         docker.connectToNetworkCmd().withContainerId(container.id).withNetworkId(puffinNetworkId).exec()
                     }
@@ -155,16 +236,43 @@ object DockerContainerManager {
             }
 
             // Make sure there are enough of each container type to satisfy the minimums from [numContainersByLabel]
-            for(containerType in numContainersByLabel) {
-                val requiredLabel = getVersionLabel(containerType.repo)
-                val serverContainers = containers.count {
-                    it.labels.containsKey(requiredLabel)
-                }
+            for (containerType in numContainersByLabel) {
+                val requiredLabel = containerType.getVersionLabel()
+                val serverContainers = containerType.count(containers)
                 if (serverContainers < containerType.minimum) {
                     logger.info("There are only $serverContainers containers with label $requiredLabel, but ${containerType.minimum} are required. Starting another.")
                     startContainer(containerType, UUID.randomUUID())
                     return@fixedRateTimer // Only start one container per cycle, no matter the type
                 }
+            }
+        }
+    }
+
+    fun consume(client: AMQPClient) {
+        client.subscribe(ReportErrorMessage::class) { message ->
+            // TODO: 7/22/22
+        }
+
+        client.subscribe(RequestUpdateMessage::class) { message ->
+            val branch = message.ref
+            val repo = message.product
+            val sha = getLatestCommitSha(repo, branch)
+            Utils.sendChat(
+                message.executor,
+                "<aqua>Building new container from commit $sha on repository $GITHUB_USER/${repo}:${branch}"
+            )
+            val result = fetchLatestVersion(repo, branch)
+            val version = getMostRecentVersion(repo)
+            if (result) {
+                Utils.sendChat(
+                    message.executor,
+                    "<green>Image built successfully!\n<dark_gray>repo=$repo, branch=$branch, version=$version"
+                )
+            } else {
+                Utils.sendChat(
+                    message.executor,
+                    "<red>Image build <b>failed</b>!\n<dark_gray>repo=$repo, branch=$branch, current latest version=$version"
+                )
             }
         }
     }
@@ -187,17 +295,28 @@ object DockerContainerManager {
      * The container is started immediately after it is created.
      */
     private fun startContainer(containerMeta: ContainerMeta, containerId: UUID) {
-        val repository = containerMeta.repo
         logger.info("Starting new container with containerId=$containerId")
         var velocitySecret = SavedProperties.getString("velocity_secret")
-        if(velocitySecret == null) {
+        if (velocitySecret == null) {
             logger.error("No velocity secret was found in puffin.properties, creating a random one...")
             velocitySecret = RandomStringUtils.randomAlphanumeric(128)
             SavedProperties.setString("velocity_secret", velocitySecret)
             SavedProperties.save()
         }
-        val image = getMostRecentTag(repository)
-        logger.info("Creating new container with repository $repository and image $image...")
+        var image = containerMeta.getMostRecentTag()
+        logger.info("Creating new container with container meta $containerMeta and image $image...")
+        if (containerMeta is ThirdPartyContainerMeta) { // Third-party containers must be pulled from a public registry
+            if (containerMeta.imageId == null) { // If the required image is not present, pull it from the registry.
+                logger.info("Pulling third-party Docker image: $image")
+                docker.pullImageCmd(containerMeta.getMostRecentTag())
+                    .withTag(containerMeta.version)
+                    .start().awaitCompletion()
+                logger.info("Docker pull completed.")
+            }
+            // Get the ID of the newly-created or already-existing image
+            image = containerMeta.imageId!!
+            logger.info("Using third-party image with ID: $image")
+        }
         val response = docker.createContainerCmd(image)
             .withName(containerId.toString()) // container name
             .withEnv(
@@ -205,10 +324,12 @@ object DockerContainerManager {
                 "velocity_secret=$velocitySecret", // pass the Velocity modern forwarding secret to the container
             )
             .withExposedPorts(containerMeta.exposedPorts)
-            .withHostConfig(HostConfig.newHostConfig()
-                .withNetworkMode(puffinNetworkId)
-                .withPortBindings(containerMeta.portBindings)
-                .withMounts(containerMeta.mounts)
+            .withHostName(containerMeta.getHostName(containerId.toString()))
+            .withHostConfig(
+                HostConfig.newHostConfig()
+                    .withNetworkMode(puffinNetworkId)
+                    .withPortBindings(containerMeta.portBindings)
+                    .withMounts(containerMeta.mounts)
             ) // put this container on the same network, so it can access the DB and messaging
             .exec()
         response.warnings?.forEach {
@@ -216,6 +337,7 @@ object DockerContainerManager {
         }
         logger.info("Container creation succeeded: container created with ID ${response.id}")
         docker.startContainerCmd(response.id).exec()
+        containerMeta.onStarted()
         logger.info("Container started successfully.")
     }
 
@@ -223,13 +345,15 @@ object DockerContainerManager {
      * Fetches the [branch] from the GitHub [repository], builds a Docker image from its latest commit,
      * and assigns this new image as the server's latest version. This means that
      * all new containers will use this version.
+     * @return true if the update was successful, false otherwise
      */
-    private fun fetchLatestVersion(repository: String, branch: String) {
+    private fun fetchLatestVersion(repository: String, branch: String): Boolean {
         val (tag, commit) = buildDockerImageFromRef(repository, branch)
         if (tag != null && commit != null) {
             setMostRecentVersion(repository, commit)
             logger.info("Update completed.")
         }
+        return tag != null && commit != null
     }
 
     /**
@@ -317,12 +441,14 @@ object DockerContainerManager {
     private fun buildDockerImage(repository: String, urlInputStream: InputStream, tag: String): String? {
         logger.info("Building a new Docker image with tag: $tag")
 
-        val pb = ProcessBuilder("docker",
+        val pb = ProcessBuilder(
+            "docker",
             "build",
             "-t", getTag(repository, tag),
             "-t", getTag(repository, "latest"),
             "--label", "${getVersionLabel(repository)}=$tag".lowercase(),
-            "-")
+            "-"
+        )
         pb.environment()["DOCKER_BUILDKIT"] = "1"
         pb.environment()["BUILDKIT_PROGRESS"] = "plain"
         pb.redirectErrorStream(true)
