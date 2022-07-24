@@ -2,9 +2,10 @@ package com.bluedragonmc.puffin
 
 import com.bluedragonmc.messages.*
 import com.bluedragonmc.messagingsystem.AMQPClient
+import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
-import java.util.Timer
-import java.util.UUID
+import java.io.File
+import java.util.*
 import kotlin.concurrent.timer
 
 object Queue {
@@ -32,18 +33,29 @@ object Queue {
     fun start(client: AMQPClient) {
         this.client = client
         client.subscribe(RequestAddToQueueMessage::class) { message ->
-            logger.info("${message.player} added to queue for ${message.gameType}")
-            queue[message.player] = message.gameType
-            queueEntranceTimes[message.player] = System.currentTimeMillis()
-            client.publish(SendChatMessage(message.player, "<green>You are now queued for ${message.gameType.name}."))
-            update()
+            runBlocking {
+                val mapName = message.gameType.mapName
+                val gameSpecificMapFolder = File(DockerContainerManager.worldsFolder, message.gameType.name)
+                if(
+                    (mapName != null && DatabaseConnection.getMapInfo(mapName) == null) || // No entry for the map in the database
+                    (mapName == null && (!gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()?.isNotEmpty() == false)) // No world folder found
+                ) {
+                    Utils.sendChat(message.player, "<red>You couldn't be added to the queue for ${message.gameType.name}. <dark_gray>(Invalid map name)")
+                } else {
+                    logger.info("${message.player} added to queue for ${message.gameType}")
+                    queue[message.player] = message.gameType
+                    queueEntranceTimes[message.player] = System.currentTimeMillis()
+                    Utils.sendChat(message.player, "<green>You are now queued for ${message.gameType.name}.")
+                    update()
+                }
+            }
         }
 
         client.subscribe(RequestRemoveFromQueueMessage::class) { message ->
             logger.info("${message.player} removed from queue")
             queue.remove(message.player)
             queueEntranceTimes.remove(message.player)
-            client.publish(SendChatMessage(message.player, "<red>You have been removed from the queue."))
+            Utils.sendChat(message.player, "<red>You have been removed from the queue.")
         }
 
         timer("queue-update", daemon = true, period = 5_000) {

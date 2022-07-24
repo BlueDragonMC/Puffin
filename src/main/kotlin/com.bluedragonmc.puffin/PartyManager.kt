@@ -2,6 +2,7 @@ package com.bluedragonmc.puffin
 
 import com.bluedragonmc.messages.*
 import com.bluedragonmc.messagingsystem.AMQPClient
+import com.bluedragonmc.puffin.DatabaseConnection.getUsername
 import java.util.Timer
 import java.util.UUID
 import kotlin.concurrent.timer
@@ -18,7 +19,7 @@ object PartyManager {
         client.publish(
             SendChatMessage(
                 player,
-                "\n<click:run_command:/party accept $partyOwner><aqua>$partyOwner<yellow> has invited you to join their party!\n<red>Click here<yellow> to accept the invitation.</click>\n"
+                "\n<click:run_command:/party accept $partyOwner><aqua>${partyOwner.getUsername()}<yellow> has invited you to join their party!\n<red>Click here<yellow> to accept the invitation.</click>\n"
             )
         )
     }
@@ -34,7 +35,7 @@ object PartyManager {
                     party.invitations.remove(message.player)
                     client.publish(
                         SendChatMessage(
-                            message.player, "\n<yellow>The invitation to <aqua>${message.partyOwner}<yellow>'s party\n<yellow>has expired.\n"
+                            message.player, "\n<yellow>The invitation to <aqua>${message.partyOwner.getUsername()}<yellow>'s party\n<yellow>has expired.\n"
                         )
                     )
                 }
@@ -51,7 +52,7 @@ object PartyManager {
                     party.invitations.remove(message.player)
                     client.publish(
                         SendChatMessage(
-                            message.player, "\n<yellow>You have joined <aqua>${message.partyOwner}<yellow>'s party!\n"
+                            message.player, "\n<yellow>You have joined <aqua>${message.partyOwner.getUsername()}<yellow>'s party!\n"
                         )
                     )
                 } else {
@@ -70,7 +71,7 @@ object PartyManager {
                         party.members.forEach {
                             client.publish(
                                 SendChatMessage(
-                                    it, "\n<aqua>${message.player}<yellow> has been removed from the party.\n"
+                                    it, "\n<aqua>${message.player.getUsername()}<yellow> has been removed from the party.\n"
                                 )
                             )
                         }
@@ -112,7 +113,7 @@ object PartyManager {
             party.members.forEach {
                 client.publish(
                     SendChatMessage(
-                        it, "\n<yellow>Party ownership has been transferred to <aqua>${message.newOwner}<yellow>.\n"
+                        it, "\n<yellow>Party ownership has been transferred to <aqua>${message.newOwner.getUsername()}<yellow>.\n"
                     )
                 )
             }
@@ -139,7 +140,7 @@ object PartyManager {
             val party = partyOf(message.player)
             if(party != null) {
                 party.members.forEach {
-                    client.publish(SendChatMessage(it, "<blue>Party > <white>${message.player}<gray>: <white>${message.message}"))
+                    client.publish(SendChatMessage(it, "<blue>Party > <white>${message.player.getUsername()}<gray>: <white>${message.message}"))
                 }
             } else {
                 client.publish(SendChatMessage(message.player, "<red>You are not in a party."))

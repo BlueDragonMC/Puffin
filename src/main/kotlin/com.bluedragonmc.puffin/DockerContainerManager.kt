@@ -48,7 +48,7 @@ object DockerContainerManager {
 
     private lateinit var puffinNetworkId: String
 
-    private val worldsFolder =
+    internal val worldsFolder =
         File("worlds") //TODO this does not work while running in a Docker container; the absolute path must be specified, probably with an env variable.
 
     /**
