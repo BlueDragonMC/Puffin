@@ -89,6 +89,14 @@ object DockerContainerManager {
             // Note: read-only mode can't be used because Hephaistos relies on a RandomAccessFile which is initialized with write privileges.
             mounts = listOf(Mount().withSource(worldsFolder.absolutePath).withTarget("/server/worlds/").withType(MountType.BIND))
         ),
+        DockerHubContainerMeta(
+            "amir20",
+            "dozzle",
+            "v3.12.13",
+            minimum = 1,
+            portBindings = listOf(PortBinding(Ports.Binding.bindIpAndPort("0.0.0.0", 8080), ExposedPort.tcp(8080))),
+            mounts = listOf(Mount().withSource("/var/run/docker.sock").withTarget("/var/run/docker.sock").withType(MountType.BIND))
+        )
 //        ThirdPartyContainerMeta(
 //            "ghcr.io/luckperms/luckperms@sha256",
 //            "6f60aaf111e31b27af805e49db87eade623a986493e72118788d864dbccd9ebe",
@@ -151,7 +159,10 @@ object DockerContainerManager {
         override var imageId: String? = null
             get() {
                 if (field == null) {
-                    field = docker.listImagesCmd().exec().find { it.repoTags?.contains("$imageName:$tag") == true }?.id
+                    field = docker.listImagesCmd().exec().find {
+                        it.repoTags?.contains("$imageName:$tag") == true  ||
+                                it.repoTags?.contains("$userName/$imageName:$tag") == true
+                    }?.id
                 }
                 return field
             }
