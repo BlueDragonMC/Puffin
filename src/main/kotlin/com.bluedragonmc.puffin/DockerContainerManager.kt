@@ -78,7 +78,8 @@ object DockerContainerManager {
             "Komodo",
             minimum = 1,
             // expose port 25565 to the host system
-            portBindings = listOf(PortBinding(Ports.Binding.bindIpAndPort("0.0.0.0", 25565), ExposedPort.tcp(25565)))
+            portBindings = listOf(PortBinding(Ports.Binding.bindIpAndPort("0.0.0.0", 25565), ExposedPort.tcp(25565))),
+            environment = arrayOf("ENABLE_TCPSHIELD=1")
         ),
         ContainerMeta(
             "Server",
@@ -110,7 +111,8 @@ object DockerContainerManager {
         val minimum: Int,
         val portBindings: List<PortBinding> = emptyList(),
         val exposedPorts: List<ExposedPort> = emptyList(),
-        val mounts: List<Mount> = emptyList()
+        val mounts: List<Mount> = emptyList(),
+        val environment: Array<String> = emptyArray()
     ) {
         /**
          * Get the Docker image tag for a specific repository using the latest version
@@ -129,8 +131,9 @@ object DockerContainerManager {
         minimum: Int,
         portBindings: List<PortBinding> = emptyList(),
         exposedPorts: List<ExposedPort> = emptyList(),
-        mounts: List<Mount> = emptyList()
-    ) : ContainerMeta("", minimum, portBindings, exposedPorts, mounts) {
+        mounts: List<Mount> = emptyList(),
+        environment: Array<String> = emptyArray()
+    ) : ContainerMeta("", minimum, portBindings, exposedPorts, mounts, environment) {
         override fun getMostRecentTag() = "$image:$version"
 
         override fun count(containers: List<Container>): Int = containers.count { it.image == imageId }
@@ -151,8 +154,9 @@ object DockerContainerManager {
         minimum: Int,
         portBindings: List<PortBinding> = emptyList(),
         exposedPorts: List<ExposedPort> = emptyList(),
-        mounts: List<Mount> = emptyList()
-    ) : ThirdPartyContainerMeta("", "", minimum, portBindings, exposedPorts, mounts) {
+        mounts: List<Mount> = emptyList(),
+        environment: Array<String> = emptyArray()
+    ) : ThirdPartyContainerMeta("", "", minimum, portBindings, exposedPorts, mounts, environment) {
         override fun getMostRecentTag(): String = "$userName/$imageName"
         override val version = tag
 
@@ -333,6 +337,7 @@ object DockerContainerManager {
             .withEnv(
                 "container_id=$containerId", // pass containerId to the program in the container
                 "velocity_secret=$velocitySecret", // pass the Velocity modern forwarding secret to the container
+                *containerMeta.environment
             )
             .withExposedPorts(containerMeta.exposedPorts)
             .withHostName(containerMeta.getHostName(containerId.toString()))
