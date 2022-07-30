@@ -335,8 +335,8 @@ object DockerContainerManager {
         val response = docker.createContainerCmd(image)
             .withName(containerId.toString()) // container name
             .withEnv(
-                "container_id=$containerId", // pass containerId to the program in the container
-                "velocity_secret=$velocitySecret", // pass the Velocity modern forwarding secret to the container
+                "PUFFIN_CONTAINER_ID=$containerId", // pass containerId to the program in the container
+                "PUFFIN_VELOCITY_SECRET=$velocitySecret", // pass the Velocity modern forwarding secret to the container
                 *containerMeta.environment
             )
             .withExposedPorts(containerMeta.exposedPorts)
@@ -472,6 +472,7 @@ object DockerContainerManager {
 
         // Get the file at [blobURL] as a gzipped tar archive, remove the outer folder, and pipe the bytes to the Docker CLI.
         removeOuterFolder(urlInputStream, process.outputStream)
+        urlInputStream.close()
 
         BufferedReader(InputStreamReader(process.inputStream)).use { input ->
             var line: String?
