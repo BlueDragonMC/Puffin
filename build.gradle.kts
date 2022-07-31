@@ -2,12 +2,13 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "1.7.10"
+    kotlin("plugin.serialization") version "1.7.10"
     id("com.github.johnrengelman.shadow") version "7.1.2"
     application
 }
 
 group = "com.bluedragonmc"
-version = "0.1.0"
+version = "1.0.0"
 
 repositories {
     mavenCentral()
@@ -17,14 +18,20 @@ repositories {
 
 dependencies {
     testImplementation(kotlin("test"))
+
     implementation("com.github.bluedragonmc:messages:a2a08c9d8e")
     implementation("com.github.bluedragonmc:messagingsystem:3abc4b8a49")
+
     implementation("ch.qos.logback:logback:0.5")
     implementation("ch.qos.logback:logback-classic:1.2.11")
+
     implementation("com.github.docker-java:docker-java-core:3.2.13")
     implementation("com.github.docker-java:docker-java-transport-httpclient5:3.2.13")
+
     implementation("org.litote.kmongo:kmongo:4.6.1")
     implementation("org.litote.kmongo:kmongo-coroutine:4.6.1")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.0-RC")
 }
 
 tasks.test {
