@@ -1,14 +1,10 @@
-package com.bluedragonmc.puffin
+package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.messages.*
-import com.bluedragonmc.messagingsystem.AMQPClient
-import org.slf4j.LoggerFactory
 import java.util.*
 import kotlin.concurrent.timer
 
-object InstanceManager {
-
-    private val logger = LoggerFactory.getLogger(InstanceManager::class.java)
+class InstanceManager(app: ServiceHolder) : Service(app) {
 
     /**
      * A map of instance IDs to their running game types
@@ -25,7 +21,71 @@ object InstanceManager {
      */
     private val pingTimes = mutableMapOf<UUID, Long>()
 
-    fun start(client: AMQPClient) {
+    private fun handleInstanceCreated(message: NotifyInstanceCreatedMessage) {
+        val queue = app.get(Queue::class)
+        // Add to map of instances to game types
+        instanceTypes[message.instanceId] = message.gameType
+
+        // Add to list of containers
+        if (!containers.containsKey(message.containerId)) {
+            logger.warn("Instance was created without a PingMessage sent first. containerId=${message.containerId}, instanceId=${message.instanceId}")
+            containers[message.containerId] = mutableSetOf()
+        }
+        containers[message.containerId]!!.add(message.instanceId)
+
+        queue.update()
+
+        // Check if this was the instance requested to start by the Queue system
+        val m = message.gameType
+        val q = queue.startingInstance ?: return
+        if (m.name == q.name && (q.mode == null || m.mode == q.mode) && (q.mapName == null || m.mapName == q.mapName)) {
+            logger.info("The instance requested by the Queue system has started: gameType=$m, instanceId=${message.instanceId}, containerId=${message.containerId}")
+            queue.startingInstance = null
+        }
+
+        pingTimes[message.containerId] = System.currentTimeMillis()
+    }
+
+    private fun handleInstanceRemoved(message: NotifyInstanceRemovedMessage) {
+        val dockerContainerManager = app.get(DockerContainerManager::class)
+        containers[message.containerId]?.remove(message.instanceId)
+        instanceTypes.remove(message.instanceId)
+
+        if(containers[message.containerId]!!.isEmpty()) {
+            // The removed instance was the container's last instance; it is currently not running any instances.
+            // Check if the container can be updated to a more recent version.
+            dockerContainerManager.getRunningContainer(message.containerId)?.let { container ->
+                if(!dockerContainerManager.isLatestVersion(container, "BlueDragonMC", "Server")) {
+                    logger.info("Removing container ${container.names.first()} because it is running an outdated version.")
+                    dockerContainerManager.removeContainer(container)
+                }
+            }
+        }
+    }
+
+    fun getGameType(instanceId: UUID) = instanceTypes[instanceId]
+    fun findInstancesOfType(
+        gameType: GameType, matchMapName: Boolean = false, matchGameMode: Boolean = false
+    ): Map<UUID, GameType> {
+        return instanceTypes.filter { (_, type) ->
+            type.name == gameType.name &&
+                    (!matchMapName || (gameType.mapName == null || type.mapName == gameType.mapName)) &&
+                    (!matchGameMode || (gameType.mode == null || type.mode == gameType.mode))
+        }
+    }
+
+    fun findContainerWithLeastInstances() = containers.minByOrNull { (_, instances) -> instances.size }
+    fun onContainerRemoved(name: String) {
+        val uuid = UUID.fromString(name)
+        val localInstances = containers[uuid]
+        containers.remove(UUID.fromString(name))
+        localInstances?.forEach { instanceTypes.remove(it) }
+    }
+
+    override fun initialize() {
+
+        val client = app.get(MessagingService::class).client
+
         client.subscribe(PingMessage::class) { message ->
             logger.info("New container started (received confirmation from Minestom server) - ${message.containerId}")
             logger.info("Version info received: ${message.versionInfo}")
@@ -67,62 +127,5 @@ object InstanceManager {
         }
     }
 
-    private fun handleInstanceCreated(message: NotifyInstanceCreatedMessage) {
-        // Add to map of instances to game types
-        instanceTypes[message.instanceId] = message.gameType
-
-        // Add to list of containers
-        if (!containers.containsKey(message.containerId)) {
-            logger.warn("Instance was created without a PingMessage sent first. containerId=${message.containerId}, instanceId=${message.instanceId}")
-            containers[message.containerId] = mutableSetOf()
-        }
-        containers[message.containerId]!!.add(message.instanceId)
-
-        Queue.update()
-
-        // Check if this was the instance requested to start by the Queue system
-        val m = message.gameType
-        val q = Queue.startingInstance ?: return
-        if (m.name == q.name && (q.mode == null || m.mode == q.mode) && (q.mapName == null || m.mapName == q.mapName)) {
-            logger.info("The instance requested by the Queue system has started: gameType=$m, instanceId=${message.instanceId}, containerId=${message.containerId}")
-            Queue.startingInstance = null
-        }
-
-        pingTimes[message.containerId] = System.currentTimeMillis()
-    }
-
-    private fun handleInstanceRemoved(message: NotifyInstanceRemovedMessage) {
-        containers[message.containerId]?.remove(message.instanceId)
-        instanceTypes.remove(message.instanceId)
-
-        if(containers[message.containerId]!!.isEmpty()) {
-            // The removed instance was the container's last instance; it is currently not running any instances.
-            // Check if the container can be updated to a more recent version.
-            DockerContainerManager.getRunningContainer(message.containerId)?.let { container ->
-                if(!DockerContainerManager.isLatestVersion(container, "Server")) {
-                    logger.info("Removing container ${container.names.first()} because it is running an outdated version.")
-                    DockerContainerManager.removeContainer(container)
-                }
-            }
-        }
-    }
-
-    fun getGameType(instanceId: UUID) = instanceTypes[instanceId]
-    fun findInstancesOfType(
-        gameType: GameType, matchMapName: Boolean = false, matchGameMode: Boolean = false
-    ): Map<UUID, GameType> {
-        return instanceTypes.filter { (_, type) ->
-            type.name == gameType.name &&
-                    (!matchMapName || (gameType.mapName == null || type.mapName == gameType.mapName)) &&
-                    (!matchGameMode || (gameType.mode == null || type.mode == gameType.mode))
-        }
-    }
-
-    fun findContainerWithLeastInstances() = containers.minByOrNull { (_, instances) -> instances.size }
-    fun onContainerRemoved(name: String) {
-        val uuid = UUID.fromString(name)
-        val localInstances = containers[uuid]
-        containers.remove(UUID.fromString(name))
-        localInstances?.forEach { instanceTypes.remove(it) }
-    }
+    override fun close() { }
 }
