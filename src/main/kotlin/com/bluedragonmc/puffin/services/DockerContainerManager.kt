@@ -159,7 +159,8 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             logger.info("Using third-party image with ID: $image")
         }
         val extraEnvironmentVars = containerMeta.env.map { it.key + "=" + it.value }.toTypedArray()
-        val response = docker.createContainerCmd(image).withName(containerId.toString()) // container name
+        val response = docker.createContainerCmd(image)
+            .withName(containerMeta.getContainerName(containerId)) // container name
             .withEnv("PUFFIN_CONTAINER_ID=$containerId", // pass containerId to the program in the container
                 "PUFFIN_VELOCITY_SECRET=${secrets.velocitySecret}", // pass the Velocity modern forwarding secret to the container
                 *extraEnvironmentVars).withExposedPorts(containerMeta.exposedPorts)

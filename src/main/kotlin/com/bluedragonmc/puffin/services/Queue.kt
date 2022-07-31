@@ -1,7 +1,6 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.messages.*
-import com.bluedragonmc.messagingsystem.AMQPClient
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
 import kotlinx.coroutines.runBlocking
@@ -13,7 +12,6 @@ class Queue(app: ServiceHolder) : Service(app) {
 
     private val queue = mutableMapOf<UUID, GameType>()
     private val queueEntranceTimes = mutableMapOf<UUID, Long>()
-    private lateinit var client: AMQPClient
 
     private var startingInstanceTimer: Timer? = null
     internal var startingInstance: GameType? = null
@@ -34,6 +32,7 @@ class Queue(app: ServiceHolder) : Service(app) {
 
         val instanceManager = app.get(InstanceManager::class)
         val gameStateManager = app.get(GameStateManager::class)
+        val client = app.get(MessagingService::class).client
 
         queue.entries.removeAll { (player, gameType) ->
             val instances = instanceManager.findInstancesOfType(gameType, matchMapName = false, matchGameMode = false)

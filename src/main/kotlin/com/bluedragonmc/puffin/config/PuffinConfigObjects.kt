@@ -14,6 +14,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.apache.commons.lang3.RandomStringUtils
 import org.slf4j.LoggerFactory
+import java.util.*
 
 @Serializable
 data class SecretsConfig @OptIn(ExperimentalSerializationApi::class) constructor(
@@ -60,6 +61,7 @@ sealed class DockerContainerConfig {
     abstract fun getVersionLabel(): String
     abstract fun getHostName(containerId: String): String
     abstract fun getImageId(docker: DockerClient, app: ServiceHolder?): String?
+    abstract fun getContainerName(containerId: UUID): String
 }
 
 @Serializable
@@ -94,6 +96,8 @@ data class DockerHubContainerConfig(
         }?.id
     }
 
+    override fun getContainerName(containerId: UUID) = image
+
 }
 
 @Serializable
@@ -127,5 +131,7 @@ data class GitRepoContainerConfig(
 
     override fun getImageId(docker: DockerClient, app: ServiceHolder?): String =
         getTag(app!!.get(ConfigService::class).config.getLatestVersion(repoName))
+
+    override fun getContainerName(containerId: UUID) = repoName + "-" + containerId.toString().substringBefore("-")
 
 }
