@@ -102,7 +102,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             Utils.sendChat(message.player, "<red>You have been removed from the queue.")
         }
 
-        timer("queue-update", daemon = true, period = 5_000) {
+        timer("queue-update", daemon = true, initialDelay = 10_000, period = 5_000) {
             // Manually update the queue every 5 seconds in case of a messaging failure or unexpected delay
             update()
 
