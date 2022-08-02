@@ -85,10 +85,11 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             // Make sure there are enough of each container type to satisfy the minimums from [numContainersByLabel]
             for (containerInfo in config.containers.sortedByDescending { it.priority }) {
                 val serverContainers = containerInfo.countRunningContainers(docker)
-                if (serverContainers < containerInfo.minimum) {
-                    logger.info("There are only $serverContainers containers of type ${containerInfo.name}, but ${containerInfo.minimum} are required. Starting another.")
+                val needed = containerInfo.minimum - serverContainers
+                if (needed <= 0) continue
+                repeat(needed) { i ->
+                    logger.info("There are only $serverContainers containers of type ${containerInfo.name}, but ${containerInfo.minimum} are required. Starting another (${i + 1}/$needed).")
                     startContainer(containerInfo, UUID.randomUUID())
-                    return@fixedRateTimer // Only start one container per cycle, no matter the type
                 }
             }
         }
