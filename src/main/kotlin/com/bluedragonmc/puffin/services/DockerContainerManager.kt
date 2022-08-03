@@ -160,16 +160,21 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             logger.info("Using third-party image with ID: $image")
         }
         val extraEnvironmentVars = containerMeta.env.map { it.key + "=" + it.value }.toTypedArray()
-        val response = docker.createContainerCmd(image)
-            .withName(containerMeta.getContainerName(containerId)) // container name
-            .withEnv("PUFFIN_CONTAINER_ID=$containerId", // pass containerId to the program in the container
+        val response = docker.createContainerCmd(image).apply {
+            withName(containerMeta.getContainerName(containerId)) // container name
+            withEnv("PUFFIN_CONTAINER_ID=$containerId", // pass containerId to the program in the container
                 "PUFFIN_VELOCITY_SECRET=${secrets.velocitySecret}", // pass the Velocity modern forwarding secret to the container
                 *extraEnvironmentVars).withExposedPorts(containerMeta.exposedPorts)
-            .withHostName(containerMeta.getHostName(containerId.toString()))
-            .withHostConfig(HostConfig.newHostConfig().withNetworkMode(puffinNetworkId)
+            withHostName(containerMeta.getHostName(containerId.toString()))
+            withLabels(containerMeta.containerLabels + ("com.bluedragonmc.puffin.container_id" to containerId.toString()))
+            withHostConfig(HostConfig.newHostConfig().withNetworkMode(puffinNetworkId)
                 .withPortBindings(containerMeta.portBindings)
                 .withMounts(containerMeta.mounts)) // put this container on the same network, so it can access the DB and messaging
-            .exec()
+            if(containerMeta.containerUser != null) {
+                withUser(containerMeta.containerUser)
+            }
+        }.exec()
+
         response.warnings?.forEach {
             logger.warn("Warning while creating container $containerId: $it")
         }
