@@ -49,11 +49,13 @@ sealed class DockerContainerConfig {
     abstract val minimum: Int
     abstract val name: String
     abstract val priority: Int
+    abstract val containerUser: String?
+    abstract val containerLabels: Map<String, String>
 
     abstract val networks: List<String>
-    abstract val exposedPorts: List<@Serializable(with = ExposedPortSerializer::class) ExposedPort>
-    abstract val portBindings: List<@Serializable(with = PortBindingSerializer::class) PortBinding>
-    abstract val mounts: List<@Serializable(with = MountSerializer::class) Mount>
+    abstract val exposedPorts: List<ExposedPort>
+    abstract val portBindings: List<PortBinding>
+    abstract val mounts: List<Mount>
     abstract val env: Map<String, String>
 
     abstract fun getTag(version: String?): String
@@ -74,6 +76,8 @@ data class DockerHubContainerConfig(
     override val portBindings: List<@Serializable(with = PortBindingSerializer::class) PortBinding> = emptyList(),
     override val mounts: List<@Serializable(with = MountSerializer::class) Mount> = emptyList(),
     override val env: Map<String, String> = emptyMap(),
+    override val containerUser: String? = null,
+    @SerialName("labels") override val containerLabels: Map<String, String> = emptyMap(),
     val user: String,
     val image: String,
     val tag: String,
@@ -110,6 +114,8 @@ data class GitRepoContainerConfig(
     override val portBindings: List<@Serializable(with = PortBindingSerializer::class) PortBinding> = emptyList(),
     override val mounts: List<@Serializable(with = MountSerializer::class) Mount> = emptyList(),
     override val env: Map<String, String> = emptyMap(),
+    override val containerUser: String? = null,
+    @SerialName("labels") override val containerLabels: Map<String, String> = emptyMap(),
     val user: String,
     val repoName: String,
     val branch: String = "main",
