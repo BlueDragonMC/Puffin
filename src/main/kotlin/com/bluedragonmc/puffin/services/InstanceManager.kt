@@ -116,12 +116,16 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
         }
         timer("instance-ping-timer", daemon = true, period = 10_000) {
             // Remove instances that have not sent a ping in the last 5 minutes.
-            pingTimes.entries.removeAll { (instanceId, time) ->
+            pingTimes.entries.removeAll { (containerId, time) ->
                 if(System.currentTimeMillis() - time > 300_000) {
-                    val containerId = containers.entries.first { (_, instances) -> instances.contains(instanceId) }.key
-                    logger.warn("Instance $instanceId on container $containerId has not sent a ping in the last 5 minutes!")
-                    logger.warn("Removing instance $instanceId")
-                    client.publish(NotifyInstanceRemovedMessage(containerId, instanceId))
+                    logger.warn("Container $containerId has not sent a ping in the last 5 minutes!")
+                    val instances = containers[containerId] ?: run {
+                        logger.warn("No instances were found in this container.")
+                        return@removeAll true
+                    }
+                    for(instanceId in instances) {
+                        client.publish(NotifyInstanceRemovedMessage(instanceId, containerId))
+                    }
                     return@removeAll true
                 } else return@removeAll false
             }
