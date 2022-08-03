@@ -47,6 +47,7 @@ class Puffin : ServiceHolder {
         val app = this
         val start = System.nanoTime()
         register(ConfigService(Paths.get("assets/puffin.json"), Paths.get("assets/secrets.json"), app))
+        register(ConfigWatcherService(app))
         register(DatabaseConnection(app))
         register(MessagingService(app)).onConnected {
             register(InstanceManager(app))

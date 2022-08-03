@@ -12,7 +12,7 @@ import kotlin.io.path.absolutePathString
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
-class ConfigService(private val file: Path, private val secretsFile: Path, app: ServiceHolder): Service(app) {
+class ConfigService(internal val file: Path, internal val secretsFile: Path, app: ServiceHolder): Service(app) {
 
     lateinit var secrets: SecretsConfig
     lateinit var config: PuffinConfig
