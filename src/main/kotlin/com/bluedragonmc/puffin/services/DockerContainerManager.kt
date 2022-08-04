@@ -82,15 +82,25 @@ class DockerContainerManager(app: Puffin) : Service(app) {
                 puffinNetworkId = puffinNetworks.first().id
             }
 
-            // Make sure there are enough of each container type to satisfy the minimums from [numContainersByLabel]
-            for (containerInfo in config.containers.sortedByDescending { it.priority }) {
-                val serverContainers = containerInfo.countRunningContainers(docker)
-                val needed = containerInfo.minimum - serverContainers
-                if (needed <= 0) continue
-                repeat(needed) { i ->
-                    logger.info("There are only $serverContainers containers of type ${containerInfo.name}, but ${containerInfo.minimum} are required. Starting another (${i + 1}/$needed).")
-                    startContainer(containerInfo, UUID.randomUUID())
+            // Make sure there are enough of each container type to satisfy the minimum amounts specified in the config file
+
+            val groups = config.containers.sortedByDescending { it.priority }.groupBy { it.priority }
+            for ((priority, containerList) in groups) { // Start containers of highest priority first
+                var containerStarted = false
+                for (containerInfo in containerList) {
+                    val runningContainers = containerInfo.countRunningContainers(docker)
+                    val needed = containerInfo.minimum - runningContainers
+                    if (needed <= 0) continue
+                    repeat(needed) { i ->
+                        logger.info("There are only $runningContainers containers of type ${containerInfo.name} (priority: $priority), but ${containerInfo.minimum} are required. Starting another (${i + 1}/$needed).")
+                        startContainer(containerInfo, UUID.randomUUID())
+                    }
+                    containerStarted = true
                 }
+                // If a container was started at this priority level,
+                // wait until the next interval to start containers at lower priorities.
+                // This is because some containers depend on others to be online.
+                if (containerStarted) break
             }
         }
 
@@ -170,7 +180,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             withHostConfig(HostConfig.newHostConfig().withNetworkMode(puffinNetworkId)
                 .withPortBindings(containerMeta.portBindings)
                 .withMounts(containerMeta.mounts)) // put this container on the same network, so it can access the DB and messaging
-            if(containerMeta.containerUser != null) {
+            if (containerMeta.containerUser != null) {
                 withUser(containerMeta.containerUser)
             }
         }.exec()
