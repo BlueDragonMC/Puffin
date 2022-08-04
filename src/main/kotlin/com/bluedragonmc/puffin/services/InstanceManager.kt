@@ -51,7 +51,7 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
         containers[message.containerId]?.remove(message.instanceId)
         instanceTypes.remove(message.instanceId)
 
-        if(containers[message.containerId]!!.isEmpty()) {
+        if(containers[message.containerId]?.isEmpty() == true) {
             // The removed instance was the container's last instance; it is currently not running any instances.
             // Check if the container can be updated to a more recent version.
             dockerContainerManager.getRunningContainer(message.containerId)?.let { container ->
