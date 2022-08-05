@@ -107,12 +107,13 @@ class Queue(app: ServiceHolder) : Service(app) {
             update()
 
             // Remove players from the queue if they've been in it for a long time
-            queueEntranceTimes.forEach { (uuid, time) ->
+            queueEntranceTimes.entries.removeAll { (uuid, time) ->
                 if (System.currentTimeMillis() - time > 30_000) {
                     Utils.sendChat(uuid, "<red>You have been removed from the queue! <dark_gray>(Queue timeout)")
                     queue.remove(uuid)
-                    queueEntranceTimes.remove(uuid)
+                    return@removeAll true
                 }
+                return@removeAll false
             }
         }
     }

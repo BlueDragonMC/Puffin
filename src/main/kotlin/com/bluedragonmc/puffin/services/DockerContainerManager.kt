@@ -34,11 +34,11 @@ class DockerContainerManager(app: Puffin) : Service(app) {
 
     private lateinit var puffinNetworkId: String
 
-    private fun setMostRecentVersion(repo: String, commit: String) {
+    private fun setMostRecentVersion(githubUser: String, repo: String, commit: String) {
         val configService = app.get(ConfigService::class)
-        configService.config.versions.latestVersions[repo] = commit
+        configService.config.versions.latestVersions["$githubUser/$repo".lowercase()] = commit
         configService.save()
-        logger.info("Latest version of $repo was updated to: $commit (Properties file saved)")
+        logger.info("Latest version of $repo was updated to: $commit (Config file saved)")
     }
 
     override fun initialize() {
@@ -50,17 +50,17 @@ class DockerContainerManager(app: Puffin) : Service(app) {
         docker = DockerClientImpl.getInstance(dockerClientConfig, httpClient)
         logger.info("Connected to Docker.")
 
-        val config = app.get(ConfigService::class).config
+        val configService = app.get(ConfigService::class)
 
-        for (containerInfo in config.containers.filterIsInstance<GitRepoContainerConfig>()) {
-            if (config.getLatestVersion(containerInfo.name).isNullOrBlank()) {
+        for (containerInfo in configService.config.containers.filterIsInstance<GitRepoContainerConfig>()) {
+            if (configService.config.getLatestVersion(containerInfo.name).isNullOrBlank()) {
                 logger.warn("No latest version information for ${containerInfo.name} was found. Gathering latest version...")
                 fetchLatestVersion(containerInfo.user, containerInfo.repoName, containerInfo.branch)
             }
         }
 
         fixedRateTimer("Docker Container Monitoring", daemon = false, period = 8_000) {
-
+            val config = configService.config
             val containers = docker.listContainersCmd().exec()
 
             // Make sure the Puffin network exists and all containers are connected to it
@@ -117,7 +117,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
                 Utils.sendChat(message.executor,
                     "<aqua>Building new container from commit $sha on repository $repo:$branch")
                 val result = fetchLatestVersion("BlueDragonMC", repo, branch)
-                val version = config.getLatestVersion(repo)
+                val version = configService.config.getLatestVersion("bluedragonmc/$repo")
                 if (result) {
                     Utils.sendChat(message.executor,
                         "<green>Image built successfully!\n<dark_gray>repo=$repo, branch=$branch, version=$version")
@@ -202,7 +202,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
     private fun fetchLatestVersion(githubUser: String, repository: String, branch: String): Boolean {
         val (tag, commit) = buildDockerImageFromRef(githubUser, repository, branch)
         if (tag != null && commit != null) {
-            setMostRecentVersion(repository, commit)
+            setMostRecentVersion(githubUser, repository, commit)
             logger.info("Update completed.")
         }
         return tag != null && commit != null

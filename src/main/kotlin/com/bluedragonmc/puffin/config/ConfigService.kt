@@ -12,29 +12,38 @@ import kotlin.io.path.absolutePathString
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
-class ConfigService(internal val file: Path, internal val secretsFile: Path, app: ServiceHolder): Service(app) {
+class ConfigService(internal val file: Path, internal val secretsFile: Path, app: ServiceHolder) : Service(app) {
 
     lateinit var secrets: SecretsConfig
     lateinit var config: PuffinConfig
 
+    private val json = Json {
+        prettyPrint = true
+    }
+
     private fun readConfig(): PuffinConfig {
         val text = file.readText(StandardCharsets.UTF_8)
-        return Json.decodeFromString(text)
+        return json.decodeFromString(text)
     }
 
     private fun readSecretsConfig(): SecretsConfig {
         val text = secretsFile.readText(StandardCharsets.UTF_8)
-        return Json.decodeFromString(text)
+        return json.decodeFromString(text)
     }
 
     fun save() {
-        file.writeText(Json.encodeToString(config), StandardCharsets.UTF_8, StandardOpenOption.WRITE)
+        file.writeText(json.encodeToString(config), StandardCharsets.UTF_8)
         logger.info("Saved config file to ${file.absolutePathString()}.")
     }
 
     override fun initialize() {
-        config = readConfig()
-        secrets = readSecretsConfig()
+        runCatching {
+            config = readConfig()
+            secrets = readSecretsConfig()
+        }.onFailure { e ->
+            logger.error("Config files failed to load: ${e.message}")
+            e.printStackTrace()
+        }
     }
 
     override fun close() {}

@@ -1,15 +1,8 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.puffin.config.ConfigService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.nio.file.FileSystems
-import java.nio.file.Path
-import java.nio.file.StandardWatchEventKinds
-import java.nio.file.WatchKey
-import java.nio.file.WatchService
+import kotlinx.coroutines.*
+import java.nio.file.*
 import kotlin.io.path.name
 
 class ConfigWatcherService(app: ServiceHolder) : Service(app) {
@@ -31,8 +24,11 @@ class ConfigWatcherService(app: ServiceHolder) : Service(app) {
                 for (event in key.pollEvents()) {
                     val updated = event.context() as Path
                     if (updated.name !in validFileNames) continue
-                    logger.info("Reloaded config file because '${updated.name}' was updated.")
-                    app.get(ConfigService::class).initialize()
+                    withContext(Dispatchers.IO) {
+                        delay(1_000)
+                        logger.info("Reloaded config file because '${updated.name}' was updated.")
+                        app.get(ConfigService::class).initialize()
+                    }
                     break
                 }
 
