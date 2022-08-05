@@ -61,6 +61,16 @@ class DockerContainerManager(app: Puffin) : Service(app) {
 
         fixedRateTimer("Docker Container Monitoring", daemon = false, period = 8_000) {
             val config = configService.config
+
+            // Prune old containers
+            val pruneResponse = docker.pruneCmd(PruneType.CONTAINERS).withUntilFilter("6h")
+                .withLabelFilter("com.bluedragonmc.puffin.container_id").exec()
+            val deletedContainers = pruneResponse.rawValues["ContainersDeleted"] as Array<*>
+            if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
+            for (container in deletedContainers) {
+                logger.info("Container ${container?.toString()} was pruned.")
+            }
+
             val containers = docker.listContainersCmd().exec()
 
             // Make sure the Puffin network exists and all containers are connected to it
@@ -85,7 +95,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             // Make sure there are enough of each container type to satisfy the minimum amounts specified in the config file
 
             val groups = config.containers.sortedByDescending { it.priority }.groupBy { it.priority }
-            for ((priority, containerList) in groups) { // Start containers of highest priority first
+            for ((priority, containerList) in groups) { // Start containers of the highest priority first
                 var containerStarted = false
                 for (containerInfo in containerList) {
                     val runningContainers = containerInfo.countRunningContainers(docker)
@@ -138,7 +148,8 @@ class DockerContainerManager(app: Puffin) : Service(app) {
      * which most likely means the container does not exist or is not running.
      */
     fun getRunningContainer(containerId: UUID): Container? {
-        val containers = docker.listContainersCmd().withNameFilter(listOf(containerId.toString())).exec()
+        val containers = docker.listContainersCmd()
+            .withLabelFilter(mapOf("com.bluedragonmc.puffin.container_id" to containerId.toString())).exec()
         return containers.firstOrNull()
     }
 
