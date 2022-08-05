@@ -24,7 +24,7 @@ class ConfigWatcherService(app: ServiceHolder) : Service(app) {
                 for (event in key.pollEvents()) {
                     val updated = event.context() as Path
                     if (updated.name !in validFileNames) continue
-                    withContext(Dispatchers.IO) {
+                    launch {
                         delay(1_000)
                         logger.info("Reloaded config file because '${updated.name}' was updated.")
                         app.get(ConfigService::class).initialize()

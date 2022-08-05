@@ -44,6 +44,7 @@ class Puffin : ServiceHolder {
     override fun unregister(type: KClass<out Service>) = services.removeIf { type.isInstance(it) }
 
     fun initialize() {
+        INSTANCE = this
         val app = this
         val start = System.nanoTime()
         register(ConfigService(Paths.get("assets/puffin.json"), Paths.get("assets/secrets.json"), app))
@@ -62,6 +63,12 @@ class Puffin : ServiceHolder {
     }
 
     companion object {
+
+        /**
+         * Provides static access to Puffin. This should be avoided wherever possible.
+         */
+        lateinit var INSTANCE: Puffin
+
         internal val IO = object : CoroutineScope {
             override val coroutineContext: CoroutineContext =
                 Dispatchers.IO + SupervisorJob() + CoroutineName("Puffin I/O")

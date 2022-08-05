@@ -1,5 +1,6 @@
 package com.bluedragonmc.puffin.config
 
+import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.serializer.ExposedPortSerializer
 import com.bluedragonmc.puffin.config.serializer.MountSerializer
 import com.bluedragonmc.puffin.config.serializer.PortBindingSerializer
@@ -8,6 +9,7 @@ import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.ExposedPort
 import com.github.dockerjava.api.model.Mount
 import com.github.dockerjava.api.model.PortBinding
+import kotlinx.coroutines.*
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
@@ -21,7 +23,11 @@ data class SecretsConfig @OptIn(ExperimentalSerializationApi::class) constructor
     val githubToken: String = error("No GitHub token was specified. GitHub-related Docker features will not work."),
     @EncodeDefault val velocitySecret: String = RandomStringUtils.randomAlphanumeric(128).also {
         LoggerFactory.getLogger("PuffinConfigObjects")
-            .warn("The Velocity forwarding secret was not specified in the secrets file. A random one was created for this session. It will not be persisted; restarting Puffin without re-creating all containers will break Velocity forwarding. Please place a very long, random string of text in the secrets file under the 'velocitySecret' key.")
+            .warn("The Velocity forwarding secret was not specified in the secrets file. A random one was created.")
+        CoroutineScope(Dispatchers.IO).launch {
+            delay(10_000)
+            Puffin.INSTANCE.get(ConfigService::class).save()
+        }
     },
 )
 
