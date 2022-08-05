@@ -228,11 +228,17 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             commit) to commit
     }
 
+    private val commitShaRegex = "[\\da-f]{40}".toRegex()
+
     /**
      * Get the latest commit SHA-1 from a GitHub [repository] on the specified [branch].
-     * Returns the full, un-truncated string.
+     * Returns the full, un-truncated string. [branch] may be a commit SHA, in which case
+     * it is returned without contacting the GitHub API.
      */
     private fun getLatestCommitSha(githubUser: String, repository: String, branch: String): String {
+        logger.info("Commit SHA for repository $repository was found: $branch")
+        if (branch.matches(commitShaRegex)) return branch
+
         val secrets = app.get(ConfigService::class).secrets
         val request = HttpRequest.newBuilder().GET()
             .uri(URI.create("https://api.github.com/repos/$githubUser/$repository/commits/$branch"))
