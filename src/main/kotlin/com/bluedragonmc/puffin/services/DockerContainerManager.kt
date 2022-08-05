@@ -236,8 +236,10 @@ class DockerContainerManager(app: Puffin) : Service(app) {
      * it is returned without contacting the GitHub API.
      */
     private fun getLatestCommitSha(githubUser: String, repository: String, branch: String): String {
-        logger.info("Commit SHA for repository $repository was found: $branch")
-        if (branch.matches(commitShaRegex)) return branch
+        if (branch.matches(commitShaRegex)) {
+            logger.info("Commit SHA for repository $repository was found: $branch")
+            return branch
+        }
 
         val secrets = app.get(ConfigService::class).secrets
         val request = HttpRequest.newBuilder().GET()
