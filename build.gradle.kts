@@ -43,11 +43,11 @@ tasks.withType<KotlinCompile> {
 }
 
 application {
-    mainClass.set("com.bluedragonmc.puffin.MainKt")
+    mainClass.set("com.bluedragonmc.puffin.app.MainKt")
 }
 
 tasks.jar {
     manifest {
-        attributes["Main-Class"] = "com.bluedragonmc.puffin.MainKt"
+        attributes["Main-Class"] = "com.bluedragonmc.puffin.app.MainKt"
     }
 }
