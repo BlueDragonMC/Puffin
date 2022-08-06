@@ -53,9 +53,30 @@ class DockerContainerManager(app: Puffin) : Service(app) {
         val configService = app.get(ConfigService::class)
 
         for (containerInfo in configService.config.containers.filterIsInstance<GitRepoContainerConfig>()) {
+            // Make sure the latest version exists for the configuration
+            val imageExists = docker.listImagesCmd()
+                .withLabelFilter(containerInfo.getVersionLabel() + "=" + configService.config.getLatestVersion(
+                    containerInfo.name)).exec().isNotEmpty()
             if (configService.config.getLatestVersion(containerInfo.name).isNullOrBlank()) {
                 logger.warn("No latest version information for ${containerInfo.name} was found. Gathering latest version...")
                 fetchLatestVersion(containerInfo.user, containerInfo.repoName, containerInfo.branch)
+            }
+            if (!imageExists) {
+                logger.warn("The latest version for ${containerInfo.name} was found, but its Docker image does not exist. Gathering latest version...")
+                fetchLatestVersion(containerInfo.user, containerInfo.repoName, containerInfo.branch)
+            }
+
+            // Check for updates on the specified interval
+            if (containerInfo.updateInterval > 0) fixedRateTimer("docker-container-update-${containerInfo.user}-${containerInfo.repoName}",
+                daemon = true,
+                initialDelay = containerInfo.updateInterval,
+                period = containerInfo.updateInterval) {
+                val currentVersion = configService.config.getLatestVersion(containerInfo.name)
+                val latestVersion = getLatestCommitSha(containerInfo.user, containerInfo.repoName, containerInfo.branch)
+                if (currentVersion != latestVersion) {
+                    logger.info("Automatically fetching the latest version of ${containerInfo.user}/${containerInfo.repoName}")
+                    fetchLatestVersion(containerInfo.user, containerInfo.repoName, latestVersion)
+                } else logger.debug("${containerInfo.user}/${containerInfo.repoName} is fully up to date.")
             }
         }
 
@@ -63,16 +84,18 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             val config = configService.config
 
             // Prune old containers
-            val pruneResponse = docker.pruneCmd(PruneType.CONTAINERS).withUntilFilter("6h")
-                .withLabelFilter("com.bluedragonmc.puffin.container_id").exec()
+            if (config.pruneTime != "-1") {
+                val pruneResponse = docker.pruneCmd(PruneType.CONTAINERS).withUntilFilter(config.pruneTime)
+                    .withLabelFilter("com.bluedragonmc.puffin.container_id").exec()
 
-            @Suppress("UNCHECKED_CAST")
-            val deletedContainers = pruneResponse.rawValues["ContainersDeleted"] as ArrayList<String>?
-            if (deletedContainers != null) {
-                if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
-                for (container in deletedContainers) {
-                    logger.info("> Container $container was pruned.")
-                    app.get(InstanceManager::class).onContainerRemoved(container)
+                @Suppress("UNCHECKED_CAST") val deletedContainers =
+                    pruneResponse.rawValues["ContainersDeleted"] as ArrayList<String>?
+                if (deletedContainers != null) {
+                    if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
+                    for (container in deletedContainers) {
+                        logger.info("> Container $container was pruned.")
+                        app.get(InstanceManager::class).onContainerRemoved(container)
+                    }
                 }
             }
 

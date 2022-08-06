@@ -41,6 +41,7 @@ data class PuffinConfig @OptIn(ExperimentalSerializationApi::class) constructor(
     @EncodeDefault val mongoPort: Int = 27017,
     @EncodeDefault val amqpHostname: String = "127.0.0.1",
     @EncodeDefault val amqpPort: Int = 5672,
+    @EncodeDefault val pruneTime: String = "6h"
 ) {
     fun getLatestVersion(id: String) = versions.latestVersions[id]
 }
@@ -125,6 +126,7 @@ data class GitRepoContainerConfig(
     val user: String,
     val repoName: String,
     val branch: String = "main",
+    val updateInterval: Long = -1
 ) : DockerContainerConfig() {
 
     override val name = "$user/$repoName".lowercase()
