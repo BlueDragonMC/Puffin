@@ -67,10 +67,12 @@ class DockerContainerManager(app: Puffin) : Service(app) {
                 .withLabelFilter("com.bluedragonmc.puffin.container_id").exec()
 
             @Suppress("UNCHECKED_CAST")
-            val deletedContainers = pruneResponse.rawValues["ContainersDeleted"] as ArrayList<String>
-            if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
-            for (container in deletedContainers) {
-                logger.info("> Container $container was pruned.")
+            val deletedContainers = pruneResponse.rawValues["ContainersDeleted"] as ArrayList<String>?
+            if (deletedContainers != null) {
+                if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
+                for (container in deletedContainers) {
+                    logger.info("> Container $container was pruned.")
+                }
             }
 
             val containers = docker.listContainersCmd().exec()
