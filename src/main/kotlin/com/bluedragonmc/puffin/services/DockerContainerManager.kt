@@ -72,6 +72,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
                 if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
                 for (container in deletedContainers) {
                     logger.info("> Container $container was pruned.")
+                    app.get(InstanceManager::class).onContainerRemoved(container)
                 }
             }
 

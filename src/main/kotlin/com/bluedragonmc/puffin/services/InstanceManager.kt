@@ -79,7 +79,10 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
         val uuid = UUID.fromString(name)
         val localInstances = containers[uuid]
         containers.remove(UUID.fromString(name))
-        localInstances?.forEach { instanceTypes.remove(it) }
+        localInstances?.forEach {
+            instanceTypes.remove(it)
+            app.get(MessagingService::class).client.publish(NotifyInstanceRemovedMessage(uuid, it))
+        }
     }
 
     override fun initialize() {
