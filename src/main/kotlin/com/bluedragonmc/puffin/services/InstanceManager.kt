@@ -50,6 +50,7 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
         val dockerContainerManager = app.get(DockerContainerManager::class)
         containers[message.containerId]?.remove(message.instanceId)
         instanceTypes.remove(message.instanceId)
+        pingTimes.remove(message.containerId)
 
         if (containers[message.containerId]?.isEmpty() == true) {
             logger.info("All instances of container ${message.containerId} have been removed.")

@@ -38,7 +38,8 @@ class DockerContainerManager(app: Puffin) : Service(app) {
 
     private fun setMostRecentVersion(githubUser: String, repo: String, commit: String) {
         val configService = app.get(ConfigService::class)
-        configService.config.versions.latestVersions["$githubUser/$repo".lowercase()] = commit
+        val dummyInfo = GitRepoContainerConfig(1, user = githubUser, repoName = repo)
+        configService.config.versions.latestVersions[dummyInfo.name] = commit
         configService.save()
         logger.info("Latest version of $repo was updated to: $commit (Config file saved)")
     }
@@ -98,7 +99,8 @@ class DockerContainerManager(app: Puffin) : Service(app) {
                     if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
                     for (dockerContainerId in deletedContainers) {
                         // Convert Docker's container ID into our own container UUID.
-                        val containerId = containers.find { it.id == dockerContainerId }?.labels?.get(CONTAINER_ID_LABEL)
+                        val containerId =
+                            containers.find { it.id == dockerContainerId }?.labels?.get(CONTAINER_ID_LABEL)
                         logger.info("> Container ${containerId ?: dockerContainerId} was pruned.")
                         if (app.has(InstanceManager::class) && containerId != null)
                             app.get(InstanceManager::class).onContainerRemoved(containerId)
@@ -222,9 +224,8 @@ class DockerContainerManager(app: Puffin) : Service(app) {
 
         logger.info("Creating new container with container meta $containerMeta and image $image...")
         if (containerMeta is DockerHubContainerConfig) { // Third-party containers must be pulled from a public registry
-            if (containerMeta.getImageId(docker,
-                    app) == null
-            ) { // If the required image is not present, pull it from the registry.
+            // If the required image is not present, pull it from the registry.
+            if (containerMeta.getImageId(docker, app) == null) {
                 logger.info("Pulling third-party Docker image: $image")
                 docker.pullImageCmd(containerMeta.getTag(config.getLatestVersion(containerMeta.name)))
                     .withTag(containerMeta.tag).start().awaitCompletion()
