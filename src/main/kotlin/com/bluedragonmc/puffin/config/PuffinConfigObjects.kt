@@ -145,7 +145,7 @@ data class GitRepoContainerConfig(
     override fun getHostName(containerId: String) = containerId
 
     override fun getImageId(docker: DockerClient, app: ServiceHolder?): String =
-        getTag(app!!.get(ConfigService::class).config.getLatestVersion(repoName))
+        getTag(app!!.get(ConfigService::class).config.getLatestVersion(name))
 
     override fun getContainerName(containerId: UUID) = repoName + "-" + containerId.toString().substringBefore("-")
 

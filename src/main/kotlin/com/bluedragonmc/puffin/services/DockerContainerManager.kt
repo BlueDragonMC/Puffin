@@ -57,9 +57,13 @@ class DockerContainerManager(app: Puffin) : Service(app) {
 
         for (containerInfo in configService.config.containers.filterIsInstance<GitRepoContainerConfig>()) {
             // Make sure the latest version exists for the configuration
-            val imageExists = docker.listImagesCmd()
-                .withLabelFilter(containerInfo.getVersionLabel() + "=" + configService.config.getLatestVersion(
-                    containerInfo.name)).exec().isNotEmpty()
+            val imageId = containerInfo.getImageId(docker, app)
+            val imageExists = try {
+                docker.inspectImageCmd(imageId).exec()
+                true
+            } catch (e: Throwable) {
+                false
+            }
             if (configService.config.getLatestVersion(containerInfo.name).isNullOrBlank()) {
                 logger.warn("No latest version information for ${containerInfo.name} was found. Gathering latest version...")
                 fetchLatestVersion(containerInfo.user, containerInfo.repoName, containerInfo.branch)
