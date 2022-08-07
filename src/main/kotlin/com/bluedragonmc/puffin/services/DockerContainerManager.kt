@@ -194,6 +194,14 @@ class DockerContainerManager(app: Puffin) : Service(app) {
         val config = app.get(ConfigService::class).config
         val secrets = app.get(ConfigService::class).secrets
         var image = containerMeta.getTag(config.getLatestVersion(containerMeta.name))
+        var containerName = containerMeta.getContainerName(containerId)
+
+        // Make sure there are no existing containers with this name
+        if(docker.listContainersCmd().withNameFilter(listOf(containerName)).exec().isNotEmpty()) {
+            // If there is an existing container, append a truncated container ID to the name.
+            containerName += "-" + containerId.toString().substringBefore('-')
+        }
+
         logger.info("Creating new container with container meta $containerMeta and image $image...")
         if (containerMeta is DockerHubContainerConfig) { // Third-party containers must be pulled from a public registry
             if (containerMeta.getImageId(docker,
@@ -210,15 +218,15 @@ class DockerContainerManager(app: Puffin) : Service(app) {
         }
         val extraEnvironmentVars = containerMeta.env.map { it.key + "=" + it.value }.toTypedArray()
         val response = docker.createContainerCmd(image).apply {
-            withName(containerMeta.getContainerName(containerId)) // container name
+            withName(containerName) // container name
             withEnv("PUFFIN_CONTAINER_ID=$containerId", // pass containerId to the program in the container
                 "PUFFIN_VELOCITY_SECRET=${secrets.velocitySecret}", // pass the Velocity modern forwarding secret to the container
                 *extraEnvironmentVars).withExposedPorts(containerMeta.exposedPorts)
             withHostName(containerMeta.getHostName(containerId.toString()))
             withLabels(containerMeta.containerLabels + ("com.bluedragonmc.puffin.container_id" to containerId.toString()))
-            withHostConfig(HostConfig.newHostConfig().withNetworkMode(puffinNetworkId)
+            withHostConfig(HostConfig.newHostConfig().withNetworkMode(puffinNetworkId) // put this container on the same network, so it can access other services
                 .withPortBindings(containerMeta.portBindings)
-                .withMounts(containerMeta.mounts)) // put this container on the same network, so it can access the DB and messaging
+                .withMounts(containerMeta.mounts))
             if (containerMeta.containerUser != null) {
                 withUser(containerMeta.containerUser)
             }
