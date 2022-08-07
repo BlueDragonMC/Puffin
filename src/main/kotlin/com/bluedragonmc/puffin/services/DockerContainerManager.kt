@@ -74,7 +74,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             }
 
             // Check for updates on the specified interval
-            if (containerInfo.updateInterval > 0) catchingTimer("docker-container-update-${containerInfo.user}-${containerInfo.repoName}",
+            if (containerInfo.updateInterval > 0) catchingTimer("update-img-${containerInfo.repoName}",
                 daemon = true,
                 initialDelay = 0L,
                 period = containerInfo.updateInterval) {

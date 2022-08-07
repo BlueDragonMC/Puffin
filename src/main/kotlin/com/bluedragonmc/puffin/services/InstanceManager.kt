@@ -80,7 +80,8 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
     fun onContainerRemoved(name: String) {
         val uuid = UUID.fromString(name)
         val localInstances = containers[uuid]
-        containers.remove(UUID.fromString(name))
+        containers.remove(uuid)
+        pingTimes.remove(uuid)
         localInstances?.forEach {
             instanceTypes.remove(it)
             app.get(MessagingService::class).client.publish(NotifyInstanceRemovedMessage(uuid, it))
