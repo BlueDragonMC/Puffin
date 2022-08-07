@@ -2,9 +2,9 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.messages.*
 import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import kotlinx.coroutines.runBlocking
 import java.util.*
-import kotlin.concurrent.timer
 
 class PartyManager(app: ServiceHolder) : Service(app) {
 
@@ -35,7 +35,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
         client.subscribe(InvitePlayerToPartyMessage::class) { message ->
             val party = partyOf(message.partyOwner) ?: createParty(message.partyOwner)
             sendInvitationMessage(message.player, message.partyOwner)
-            val timer = timer(daemon = true, initialDelay = 60_000, period = 60_000) {
+            val timer = catchingTimer(daemon = true, initialDelay = 60_000, period = 60_000) {
                 this.cancel()
                 if (party.invitations.contains(message.player)) {
                     party.invitations.remove(message.player)

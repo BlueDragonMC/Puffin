@@ -4,7 +4,9 @@ It runs in a Docker container with access to the external Docker runtime to crea
 
 ## Usage
 - Clone: `git clone https://github.com/BlueDragonMC/Puffin.git`
+- Configure: see guide below
 - Build: `./gradlew build`
+- Run: `java -jar build/libs/Puffin-x.x.x-all.jar`
 
 ## Configuration
 Puffin is configured using two files: `assets/puffin.json` and `assets/secrets.json`.
@@ -16,6 +18,7 @@ Puffin is configured using two files: `assets/puffin.json` and `assets/secrets.j
 `puffin.json`:
 * `worldsFolder`: (String) The complete, absolute path to the parent directory of all worlds. Used for checking validity of map names.
 * `puffinNetworkName`: (String) The name of Puffin's internal Docker bridge network
+* `dockerHostname`: (String) The URL used to connect to the Docker Engine API. Supports both HTTP and UNIX protocols.
 * `mongoHostname`: (String) The hostname of a MongoDB instance
 * `mongoPort`: (Int) The port number of the MongoDB instance
 * `amqpHostname`: (String) The hostname of a RabbitMQ instance

@@ -4,8 +4,8 @@ import com.bluedragonmc.messages.polymorphicModuleBuilder
 import com.bluedragonmc.messagingsystem.AMQPClient
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
+import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import java.net.Socket
-import kotlin.concurrent.timer
 
 class MessagingService(app: Puffin) : Service(app) {
 
@@ -39,7 +39,7 @@ class MessagingService(app: Puffin) : Service(app) {
     override fun initialize() {
         val config = app.get(ConfigService::class).config
         logger.info("Waiting for RabbitMQ to start up to receive messages.")
-        timer("RabbitMQ Connection Check", daemon = false, period = 5_000) {
+        catchingTimer("amqp-connection-test", daemon = false, period = 5_000) {
             try {
                 // Check if RabbitMQ is ready for requests
                 Socket(config.amqpHostname,
@@ -51,7 +51,7 @@ class MessagingService(app: Puffin) : Service(app) {
                 logger.info("RabbitMQ started successfully! Initializing messaging support.")
             } catch (ignored: Throwable) {
                 logger.debug("Waiting 5 seconds to retry connection to RabbitMQ.")
-                return@timer
+                return@catchingTimer
             }
             onRabbitMQStart()
             this.cancel()

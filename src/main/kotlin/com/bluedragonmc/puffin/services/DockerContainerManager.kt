@@ -2,14 +2,17 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.messages.ReportErrorMessage
 import com.bluedragonmc.messages.RequestUpdateMessage
-import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.config.DockerContainerConfig
 import com.bluedragonmc.puffin.config.DockerHubContainerConfig
 import com.bluedragonmc.puffin.config.GitRepoContainerConfig
+import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.*
+import com.github.dockerjava.api.model.Container
+import com.github.dockerjava.api.model.HostConfig
+import com.github.dockerjava.api.model.PruneType
 import com.github.dockerjava.core.DefaultDockerClientConfig
 import com.github.dockerjava.core.DockerClientImpl
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient
@@ -25,7 +28,6 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse.BodyHandlers
 import java.util.*
-import kotlin.concurrent.fixedRateTimer
 
 class DockerContainerManager(app: Puffin) : Service(app) {
 
@@ -43,14 +45,14 @@ class DockerContainerManager(app: Puffin) : Service(app) {
 
     override fun initialize() {
 
+        val configService = app.get(ConfigService::class)
+
         // Connect to Docker via Unix Sockets to create and manage containers
         val dockerClientConfig =
-            DefaultDockerClientConfig.Builder().withDockerHost("unix:///var/run/docker.sock").build()
+            DefaultDockerClientConfig.Builder().withDockerHost(configService.config.dockerHostname).build()
         val httpClient = ApacheDockerHttpClient.Builder().dockerHost(dockerClientConfig.dockerHost).build()
         docker = DockerClientImpl.getInstance(dockerClientConfig, httpClient)
-        logger.info("Connected to Docker.")
-
-        val configService = app.get(ConfigService::class)
+        logger.info("Connected to the Docker daemon.")
 
         for (containerInfo in configService.config.containers.filterIsInstance<GitRepoContainerConfig>()) {
             // Make sure the latest version exists for the configuration
@@ -67,9 +69,9 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             }
 
             // Check for updates on the specified interval
-            if (containerInfo.updateInterval > 0) fixedRateTimer("docker-container-update-${containerInfo.user}-${containerInfo.repoName}",
+            if (containerInfo.updateInterval > 0) catchingTimer("docker-container-update-${containerInfo.user}-${containerInfo.repoName}",
                 daemon = true,
-                initialDelay = containerInfo.updateInterval,
+                initialDelay = 0L,
                 period = containerInfo.updateInterval) {
                 val currentVersion = configService.config.getLatestVersion(containerInfo.name)
                 val latestVersion = getLatestCommitSha(containerInfo.user, containerInfo.repoName, containerInfo.branch)
@@ -80,26 +82,34 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             }
         }
 
-        fixedRateTimer("Docker Container Monitoring", daemon = false, period = 8_000) {
+        catchingTimer("docker-container-upkeep", daemon = false, period = 8_000) {
             val config = configService.config
 
             // Prune old containers
+            val containers = docker.listContainersCmd().withShowAll(true).exec()
             if (config.pruneTime != "-1") {
                 val pruneResponse = docker.pruneCmd(PruneType.CONTAINERS).withUntilFilter(config.pruneTime)
-                    .withLabelFilter("com.bluedragonmc.puffin.container_id").exec()
+                    .withLabelFilter(CONTAINER_ID_LABEL).exec()
 
                 @Suppress("UNCHECKED_CAST") val deletedContainers =
                     pruneResponse.rawValues["ContainersDeleted"] as ArrayList<String>?
                 if (deletedContainers != null) {
+                    logger.info("Deleted containers: $deletedContainers")
                     if (deletedContainers.isNotEmpty()) logger.info("Pruned ${deletedContainers.size} stopped containers.")
-                    for (container in deletedContainers) {
-                        logger.info("> Container $container was pruned.")
-                        app.get(InstanceManager::class).onContainerRemoved(container)
+                    for (dockerContainerId in deletedContainers) {
+                        // Convert Docker's container ID into our own container UUID.
+                        val containerId = containers.find { it.id == dockerContainerId }?.labels?.get(CONTAINER_ID_LABEL)
+                        logger.info("> Container ${containerId ?: dockerContainerId} was pruned.")
+                        if (app.has(InstanceManager::class) && containerId != null)
+                            app.get(InstanceManager::class).onContainerRemoved(containerId)
                     }
+
+                    containers.removeAll { it.id in deletedContainers }
                 }
             }
 
-            val containers = docker.listContainersCmd().exec()
+            // There is no need to process non-running containers beyond this point
+            containers.removeAll { it.state != "running" }
 
             // Make sure the Puffin network exists and all containers are connected to it
             val puffinNetworks = docker.listNetworksCmd().withNameFilter(config.puffinNetworkName).exec()
@@ -151,11 +161,19 @@ class DockerContainerManager(app: Puffin) : Service(app) {
                 // Updates requested via messages can't request and repo outside the BlueDragonMC org
                 val branch = message.ref
                 val repo = message.product
+                logger.info("Update requested for BlueDragonMC/$repo:$branch")
                 val sha = getLatestCommitSha("BlueDragonMC", repo, branch)
+                logger.info("Found latest commit SHA for branch $branch: $sha")
                 Utils.sendChat(message.executor,
                     "<aqua>Building new container from commit $sha on repository $repo:$branch")
                 val result = fetchLatestVersion("BlueDragonMC", repo, branch)
-                val version = configService.config.getLatestVersion("bluedragonmc/$repo")
+                val version = configService.config.getLatestVersion(
+                    GitRepoContainerConfig(
+                        minimum = 1,
+                        user = "BlueDragonMC",
+                        repoName = repo
+                    ).name
+                )
                 if (result) {
                     Utils.sendChat(message.executor,
                         "<green>Image built successfully!\n<dark_gray>repo=$repo, branch=$branch, version=$version")
@@ -177,7 +195,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
      */
     fun getRunningContainer(containerId: UUID): Container? {
         val containers = docker.listContainersCmd()
-            .withLabelFilter(mapOf("com.bluedragonmc.puffin.container_id" to containerId.toString())).exec()
+            .withLabelFilter(mapOf(CONTAINER_ID_LABEL to containerId.toString())).exec()
         return containers.firstOrNull()
     }
 
@@ -197,7 +215,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
         var containerName = containerMeta.getContainerName(containerId)
 
         // Make sure there are no existing containers with this name
-        if(docker.listContainersCmd().withNameFilter(listOf(containerName)).exec().isNotEmpty()) {
+        if (docker.listContainersCmd().withNameFilter(listOf(containerName)).exec().isNotEmpty()) {
             // If there is an existing container, append a truncated container ID to the name.
             containerName += "-" + containerId.toString().substringBefore('-')
         }
@@ -223,8 +241,9 @@ class DockerContainerManager(app: Puffin) : Service(app) {
                 "PUFFIN_VELOCITY_SECRET=${secrets.velocitySecret}", // pass the Velocity modern forwarding secret to the container
                 *extraEnvironmentVars).withExposedPorts(containerMeta.exposedPorts)
             withHostName(containerMeta.getHostName(containerId.toString()))
-            withLabels(containerMeta.containerLabels + ("com.bluedragonmc.puffin.container_id" to containerId.toString()))
-            withHostConfig(HostConfig.newHostConfig().withNetworkMode(puffinNetworkId) // put this container on the same network, so it can access other services
+            withLabels(containerMeta.containerLabels + (CONTAINER_ID_LABEL to containerId.toString()))
+            withHostConfig(HostConfig.newHostConfig()
+                .withNetworkMode(puffinNetworkId) // put this container on the same network, so it can access other services
                 .withPortBindings(containerMeta.portBindings)
                 .withMounts(containerMeta.mounts))
             if (containerMeta.containerUser != null) {
@@ -283,10 +302,7 @@ class DockerContainerManager(app: Puffin) : Service(app) {
      * it is returned without contacting the GitHub API.
      */
     private fun getLatestCommitSha(githubUser: String, repository: String, branch: String): String {
-        if (branch.matches(commitShaRegex)) {
-            logger.info("Commit SHA for repository $repository was found: $branch")
-            return branch
-        }
+        if (branch.matches(commitShaRegex)) return branch
 
         val secrets = app.get(ConfigService::class).secrets
         val request = HttpRequest.newBuilder().GET()
@@ -296,7 +312,6 @@ class DockerContainerManager(app: Puffin) : Service(app) {
 
         val response = http.send(request, BodyHandlers.ofString())
         if (response.statusCode() == 200) {
-            logger.info("Found latest commit SHA for branch $branch: ${response.body()}")
             return response.body()
         } else throw RuntimeException("Error received while querying GitHub API: ${response.statusCode()}; ${response.body()}")
     }
@@ -396,14 +411,27 @@ class DockerContainerManager(app: Puffin) : Service(app) {
      * Forces a container's removal. The container will be killed if it is currently running, and then it will be removed.
      */
     fun removeContainer(container: Container) {
-        app.get(InstanceManager::class).onContainerRemoved(container.names.first().substringAfter('/'))
+        val containerId = container.labels[CONTAINER_ID_LABEL] ?: kotlin.run {
+            logger.warn("No container ID found for container to remove: $container")
+            return
+        }
+        app.get(InstanceManager::class).onContainerRemoved(containerId)
         docker.removeContainerCmd(container.id).withForce(true).exec()
     }
 
-    fun isLatestVersion(container: Container, githubUser: String, repository: String): Boolean {
+    fun isLatestVersion(container: Container, githubUser: String, repository: String): Boolean? {
         val config = app.get(ConfigService::class).config
         val dummyInfo = GitRepoContainerConfig(1, user = githubUser, repoName = repository)
-        return container.labels[dummyInfo.getVersionLabel()] == config.getLatestVersion(repository)
+        if (!container.labels.containsKey(dummyInfo.getVersionLabel())) return null // The container is not running any version of [repository]
+        return container.labels[dummyInfo.getVersionLabel()] == config.getLatestVersion(dummyInfo.name)
+    }
+
+    companion object {
+        /**
+         * A label assigned to all Puffin containers whose value represents the container's unique ID.
+         * This value is in a dashed UUID format.
+         */
+        const val CONTAINER_ID_LABEL = "com.bluedragonmc.puffin.container_id"
     }
 
 }

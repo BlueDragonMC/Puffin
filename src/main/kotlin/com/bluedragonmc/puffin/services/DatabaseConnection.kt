@@ -2,6 +2,7 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
+import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.client.model.Filters
@@ -14,7 +15,6 @@ import org.litote.kmongo.reactivestreams.KMongo
 import java.net.Socket
 import java.util.*
 import java.util.concurrent.TimeUnit
-import kotlin.concurrent.timer
 
 class DatabaseConnection(app: Puffin) : Service(app) {
 
@@ -55,7 +55,7 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     override fun initialize() {
         val config = app.get(ConfigService::class).config
         // Wait for the port to become available, then connect to the database normally.
-        timer("MongoDB Connection Check", daemon = false, period = 5_000) {
+        catchingTimer("mongo-connection-test", daemon = false, period = 5_000) {
             try {
                 // Check if MongoDB is ready for requests
                 Socket(config.mongoHostname,
@@ -68,7 +68,7 @@ class DatabaseConnection(app: Puffin) : Service(app) {
                     }.build()).close() // Create a client to verify that MongoDB is fully started and running on this port
             } catch (ignored: Throwable) {
                 logger.debug("Waiting 5 seconds to retry connection to MongoDB.")
-                return@timer
+                return@catchingTimer
             }
 
             logger.info("Connected to MongoDB.")

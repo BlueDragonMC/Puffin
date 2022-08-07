@@ -3,10 +3,10 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.messages.*
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.*
-import kotlin.concurrent.timer
 
 class Queue(app: ServiceHolder) : Service(app) {
 
@@ -20,10 +20,10 @@ class Queue(app: ServiceHolder) : Service(app) {
             startingInstanceTimer?.cancel()
             if (value != null) {
                 startingInstanceTimer =
-                    timer("Instance Creation Timeout", daemon = true, initialDelay = 10_000, period = Long.MAX_VALUE) {
+                    catchingTimer("instance-creation-timeout", daemon = true, initialDelay = 10_000, period = Long.MAX_VALUE) {
                         this.cancel()
-                        field = null
                         logger.warn("Instance of game type $field was not created within the timeout period of 10 seconds!")
+                        field = null
                     }
             }
         }
@@ -102,7 +102,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             Utils.sendChat(message.player, "<red>You have been removed from the queue.")
         }
 
-        timer("queue-update", daemon = true, initialDelay = 10_000, period = 5_000) {
+        catchingTimer("queue-update", daemon = true, initialDelay = 10_000, period = 5_000) {
             // Manually update the queue every 5 seconds in case of a messaging failure or unexpected delay
             update()
 

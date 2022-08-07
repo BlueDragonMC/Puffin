@@ -1,8 +1,8 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.messages.*
+import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import java.util.*
-import kotlin.concurrent.timer
 
 class InstanceManager(app: ServiceHolder) : Service(app) {
 
@@ -51,12 +51,13 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
         containers[message.containerId]?.remove(message.instanceId)
         instanceTypes.remove(message.instanceId)
 
-        if(containers[message.containerId]?.isEmpty() == true) {
+        if (containers[message.containerId]?.isEmpty() == true) {
+            logger.info("All instances of container ${message.containerId} have been removed.")
             // The removed instance was the container's last instance; it is currently not running any instances.
             // Check if the container can be updated to a more recent version.
             dockerContainerManager.getRunningContainer(message.containerId)?.let { container ->
-                if(!dockerContainerManager.isLatestVersion(container, "BlueDragonMC", "Server")) {
-                    logger.info("Removing container ${container.names.first()} because it is running an outdated version.")
+                if (dockerContainerManager.isLatestVersion(container, "BlueDragonMC", "Server") == false) {
+                    logger.info("Removing container ${message.containerId} (${container.names.firstOrNull()}) because it is running an outdated version.")
                     dockerContainerManager.removeContainer(container)
                 }
             }
@@ -65,7 +66,7 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
 
     fun getGameType(instanceId: UUID) = instanceTypes[instanceId]
     fun findInstancesOfType(
-        gameType: GameType, matchMapName: Boolean = false, matchGameMode: Boolean = false
+        gameType: GameType, matchMapName: Boolean = false, matchGameMode: Boolean = false,
     ): Map<UUID, GameType> {
         return instanceTypes.filter { (_, type) ->
             type.name == gameType.name &&
@@ -108,7 +109,9 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
 
             added.forEach {
                 logger.info("Instance added via ServerSyncMessage: $it")
-                handleInstanceCreated(NotifyInstanceCreatedMessage(message.containerId, it.instanceId, it.type ?: GameType("unknown")))
+                handleInstanceCreated(NotifyInstanceCreatedMessage(message.containerId,
+                    it.instanceId,
+                    it.type ?: GameType("unknown")))
             }
             removed.forEach {
                 logger.info("Instance removed via ServerSyncMessage: $it")
@@ -117,16 +120,16 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
 
             pingTimes[message.containerId] = System.currentTimeMillis()
         }
-        timer("instance-ping-timer", daemon = true, period = 10_000) {
+        catchingTimer("instance-ping-timer", daemon = true, period = 10_000) {
             // Remove instances that have not sent a ping in the last 5 minutes.
             pingTimes.entries.removeAll { (containerId, time) ->
-                if(System.currentTimeMillis() - time > 300_000) {
+                if (System.currentTimeMillis() - time > 300_000) {
                     logger.warn("Container $containerId has not sent a ping in the last 5 minutes!")
                     val instances = containers[containerId] ?: run {
                         logger.warn("No instances were found in this container.")
                         return@removeAll true
                     }
-                    for(instanceId in instances) {
+                    for (instanceId in instances) {
                         client.publish(NotifyInstanceRemovedMessage(instanceId, containerId))
                     }
                     return@removeAll true
@@ -135,5 +138,5 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
         }
     }
 
-    override fun close() { }
+    override fun close() {}
 }

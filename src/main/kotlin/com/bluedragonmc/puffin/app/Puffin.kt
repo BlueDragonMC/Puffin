@@ -19,11 +19,16 @@ class Puffin : ServiceHolder {
 
     private val services = mutableListOf<Service>()
 
+    @Suppress("UNCHECKED_CAST")
     override fun <T : Service> get(type: KClass<out T>): T {
         services.forEach {
             if (type.isInstance(it)) return it as T
         }
         error("No service found of type $type")
+    }
+
+    override fun has(type: KClass<out Service>): Boolean {
+        return services.any { type.isInstance(it) }
     }
 
     override fun <T : Service> register(service: T): T {
