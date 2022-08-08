@@ -87,6 +87,19 @@ class DockerContainerManager(app: Puffin) : Service(app) {
             }
         }
 
+        catchingTimer("docker-health-check", daemon = false, period = 5_000) {
+            val containers = docker.listContainersCmd()
+                .withFilter("health", listOf("unhealthy"))
+                .withLabelFilter(listOf(CONTAINER_ID_LABEL))
+                .exec()
+
+            for (container in containers) {
+                val containerId = container.labels[CONTAINER_ID_LABEL]!!
+                logger.warn("Stopping unhealthy container $containerId")
+                docker.stopContainerCmd(container.id).exec()
+            }
+        }
+
         catchingTimer("docker-container-upkeep", daemon = false, period = 8_000) {
             val config = configService.config
 
