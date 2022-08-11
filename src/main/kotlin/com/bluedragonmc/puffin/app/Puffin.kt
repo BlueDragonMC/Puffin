@@ -8,7 +8,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.slf4j.LoggerFactory
-import java.nio.file.Paths
 import kotlin.coroutines.CoroutineContext
 import kotlin.reflect.KClass
 import kotlin.system.exitProcess
@@ -52,8 +51,7 @@ class Puffin : ServiceHolder {
         INSTANCE = this
         val app = this
         val start = System.nanoTime()
-        register(ConfigService(Paths.get("assets/puffin.json"), Paths.get("assets/secrets.json"), app))
-        register(ConfigWatcherService(app))
+        register(ConfigService(app))
         register(DatabaseConnection(app))
         register(MessagingService(app)).onConnected {
             register(InstanceManager(app))
@@ -64,7 +62,7 @@ class Puffin : ServiceHolder {
             register(Utils.UtilsService(app))
             logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         }
-        register(DockerContainerManager(app))
+        register(ServiceDiscovery(app))
     }
 
     companion object {
