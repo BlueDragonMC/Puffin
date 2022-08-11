@@ -62,9 +62,9 @@ class Queue(app: ServiceHolder) : Service(app) {
             logger.info("Starting a new instance for player $player because they could not find any instances running $gameType.")
             // Create a new instance for the first player in the queue.
             startingInstance = gameType
-            val (container, instances) = instanceManager.findContainerWithLeastInstances() ?: return@let
-            logger.info("The container with the least instances is $container with ${instances.size} instances running.")
-            client.publish(RequestCreateInstanceMessage(container, gameType))
+            val (gameServer, instances) = instanceManager.findGameServerWithLeastInstances() ?: return@let
+            logger.info("The GameServer with the least instances is $gameServer with ${instances.size} instances running.")
+            client.publish(RequestCreateInstanceMessage(gameServer, gameType))
             Utils.sendChat(player, "<aqua>Creating a new instance...", ChatType.ACTION_BAR)
         }
     }
