@@ -58,10 +58,14 @@ class ServiceDiscovery(app: ServiceHolder) : Service(app) {
         private val status = `object`.raw.getAsJsonObject("status")
 
         val uid: UUID = UUID.fromString(`object`.metadata.uid)
-        val address: String = status.get("address").asString
-        val port = status.get("ports").asJsonArray.first { p ->
-            p.asJsonObject.get("name").asString == "minecraft"
-        }.asJsonObject.get("port").asInt
+        val address: String by lazy {
+            return@lazy status.get("address").asString
+        }
+        val port by lazy {
+            if(status.has("ports") && status.get("ports").isJsonArray) status.get("ports").asJsonArray.first { p ->
+                p.asJsonObject.get("name").asString == "minecraft"
+            }.asJsonObject.get("port").asInt else null
+        }
         val name = `object`.metadata.name
     }
 
