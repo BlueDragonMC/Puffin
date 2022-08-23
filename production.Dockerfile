@@ -7,7 +7,7 @@ FROM docker.io/library/gradle:7.4.2-jdk17-alpine as build
 COPY . /work
 WORKDIR /work
 # Run gradle in the /work directory
-RUN /usr/bin/gradle --console=rich --warn --stacktrace --no-daemon build
+RUN /usr/bin/gradle --console=plain --info --stacktrace --no-daemon build
 
 # Run the built JAR and expose port 25565
 FROM docker.io/library/eclipse-temurin:17-jre-alpine
