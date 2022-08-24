@@ -84,12 +84,12 @@ class Queue(app: ServiceHolder) : Service(app) {
                         ?.isNotEmpty() == false)) // No world folder found
                 ) {
                     Utils.sendChat(message.player,
-                        "<red>You couldn't be added to the queue for ${message.gameType.name}. <dark_gray>(Invalid map name)")
+                        "<red><lang:queue.adding.failed:'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
                 } else {
                     logger.info("${message.player} added to queue for ${message.gameType}")
                     queue[message.player] = message.gameType
                     queueEntranceTimes[message.player] = System.currentTimeMillis()
-                    Utils.sendChat(message.player, "<green>You are now queued for ${message.gameType.name}.")
+                    Utils.sendChat(message.player, "<green><lang:queue.added.game:'${message.gameType.name}'>")
                     update()
                 }
             }
@@ -99,7 +99,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             logger.info("${message.player} removed from queue")
             queue.remove(message.player)
             queueEntranceTimes.remove(message.player)
-            Utils.sendChat(message.player, "<red>You have been removed from the queue.")
+            Utils.sendChat(message.player, "<red><lang:queue.removed>")
         }
 
         catchingTimer("queue-update", daemon = true, initialDelay = 10_000, period = 5_000) {
@@ -109,7 +109,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             // Remove players from the queue if they've been in it for a long time
             queueEntranceTimes.entries.removeAll { (uuid, time) ->
                 if (System.currentTimeMillis() - time > 30_000) {
-                    Utils.sendChat(uuid, "<red>You have been removed from the queue! <dark_gray>(Queue timeout)")
+                    Utils.sendChat(uuid, "<red><lang:queue.removed.reason:'<dark_gray><lang:queue.removed.reason.timeout>'>")
                     queue.remove(uuid)
                     return@removeAll true
                 }
