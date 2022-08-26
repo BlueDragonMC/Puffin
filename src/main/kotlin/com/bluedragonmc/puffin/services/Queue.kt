@@ -65,7 +65,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             val (gameServer, instances) = instanceManager.findGameServerWithLeastInstances() ?: return@let
             logger.info("The GameServer with the least instances is $gameServer with ${instances.size} instances running.")
             client.publish(RequestCreateInstanceMessage(gameServer, gameType))
-            Utils.sendChat(player, "<aqua>Creating a new instance...", ChatType.ACTION_BAR)
+            Utils.sendChat(player, "<p2>Creating a new instance...", ChatType.ACTION_BAR)
         }
     }
 
@@ -89,7 +89,7 @@ class Queue(app: ServiceHolder) : Service(app) {
                     logger.info("${message.player} added to queue for ${message.gameType}")
                     queue[message.player] = message.gameType
                     queueEntranceTimes[message.player] = System.currentTimeMillis()
-                    Utils.sendChat(message.player, "<green><lang:queue.added.game:'${message.gameType.name}'>")
+                    Utils.sendChat(message.player, "<p1><lang:queue.added.game:'${message.gameType.name}'>")
                     update()
                 }
             }

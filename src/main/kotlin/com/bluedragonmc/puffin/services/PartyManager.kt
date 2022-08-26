@@ -22,7 +22,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
 
     private fun sendInvitationMessage(player: UUID, partyOwner: UUID) {
         Utils.sendChat(player,
-            "\n<yellow><click:run_command:/party accept $partyOwner><lang:puffin.party.invite.1:'<aqua>${partyOwner.username}'>\n<yellow><lang:puffin.party.invite.2:'<red><lang:puffin.party.invite.clickable>'></click>\n")
+            "\n<p2><click:run_command:/party accept $partyOwner><lang:puffin.party.invite.1:'<p1>${partyOwner.username}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>\n")
     }
 
     data class Party(val members: MutableList<UUID>, val invitations: MutableMap<UUID, Timer>, var leader: UUID)
@@ -40,7 +40,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 if (party.invitations.contains(message.player)) {
                     party.invitations.remove(message.player)
                     Utils.sendChat(message.player,
-                        "<yellow><lang:puffin.party.invite.expired:'<aqua>${message.partyOwner.username}'>")
+                        "<p2><lang:puffin.party.invite.expired:'<p1>${message.partyOwner.username}'>")
                 }
             }
             party.invitations[message.player] = timer
@@ -55,7 +55,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                     party.members.add(message.player)
                     party.invitations.remove(message.player)
                     Utils.sendChat(message.player,
-                        "\n<yellow><lang:puffin.party.join.self:'<aqua>${message.partyOwner.username}'>\n")
+                        "\n<p2><lang:puffin.party.join.self:'<p1>${message.partyOwner.username}'>\n")
                 } else {
                     Utils.sendChat(message.player, "<red><lang:puffin.party.join.no_invitation>")
                 }
@@ -72,9 +72,9 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                         party.members.remove(message.player)
                         party.members.forEach {
                             Utils.sendChat(it,
-                                "\n<yellow><lang:puffin.party.kick.success:'<aqua>${message.player.username}'>\n")
+                                "\n<p2><lang:puffin.party.kick.success:'<p1>${message.player.username}'>\n")
                         }
-                        Utils.sendChat(message.player, "\n<yellow><lang:puffin.party.kick.removed>\n")
+                        Utils.sendChat(message.player, "\n<p2><lang:puffin.party.kick.removed>\n")
                     } else {
                         Utils.sendChat(message.player, "<red><lang:puffin.party.member_not_found>")
                     }
@@ -97,7 +97,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             party.leader = message.newOwner
             party.members.forEach {
                 Utils.sendChat(it,
-                    "\n<yellow><lang:puffin.party.transfer.success:'<aqua>${message.newOwner.username}'>\n")
+                    "\n<p2><lang:puffin.party.transfer.success:'<p1>${message.newOwner.username}'>\n")
             }
         }
 
@@ -121,7 +121,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             if (party != null) {
                 party.members.forEach {
                     Utils.sendChat(it,
-                        "<blue><lang:puffin.party.chat.prefix> <white>${message.player.username}<gray>: <white>${message.message}")
+                        "<p3><lang:puffin.party.chat.prefix> <white>${message.player.username}<gray>: <white>${message.message}")
                 }
             } else {
                 Utils.sendChat(message.player, "<red><lang:puffin.party.chat.not_found>")
@@ -132,10 +132,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             val party = partyOf(message.player)
             if (party != null) {
                 val members = party.members.filter { it != party.leader }
-                    .joinToString(prefix = "<aqua>", separator = "<yellow>, <aqua>") { it.username }
+                    .joinToString(prefix = "<p1>", separator = "<p2>, <p1>") { it.username }
                 val leader = party.leader.username
                 Utils.sendChat(message.player,
-                    "\n<yellow><lang:puffin.party.list.leader:'<aqua>$leader'>\n<yellow><lang:puffin.party.list.members:'${party.members.size - 1}':'$members'>\n")
+                    "\n<p2><lang:puffin.party.list.leader:'<p1>$leader'>\n<p2><lang:puffin.party.list.members:'${party.members.size - 1}':'$members'>\n")
             } else {
                 Utils.sendChat(message.player, "<red><lang:puffin.party.chat.not_found>")
             }
