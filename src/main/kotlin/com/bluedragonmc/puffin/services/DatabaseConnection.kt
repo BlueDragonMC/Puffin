@@ -27,14 +27,30 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     private lateinit var db: CoroutineDatabase
     private lateinit var playersCollection: CoroutineCollection<Document>
     private lateinit var mapsCollection: CoroutineCollection<Document>
+    private lateinit var groupsCollection: CoroutineCollection<Document>
 
     private val builder = Caffeine.newBuilder()
         .maximumSize(10_000)
         .expireAfterWrite(Duration.ofMinutes(10))
 
-    private val uuidCache: Cache<String, UUID?> = builder.build()
-    private val usernameCache: Cache<UUID, String?> = builder.build()
-    private val mapDataCache: Cache<String, Document?> = builder.build()
+    private val uuidCache: Cache<String, UUID> = builder.build()
+    private val usernameCache: Cache<UUID, String> = builder.build()
+    private val userColorCache: Cache<UUID, String> = builder.build()
+    private val groupCache: Cache<String, Document> = builder.build()
+    private val mapDataCache: Cache<String, Document> = builder.build()
+
+    suspend fun getPlayerDocument(uuid: UUID): Document? = playersCollection.findOneById(uuid.toString())
+
+    fun getPlayerNameColor(uuid: UUID): String? = userColorCache.get(uuid) {
+        runBlocking {
+            val groupName = getPlayerDocument(uuid)?.getList("groups", String::class.java)?.firstOrNull()
+                ?: return@runBlocking "#aaaaaa" // Default color
+            val group = groupCache.get(groupName) {
+                runBlocking { groupsCollection.findOneById(groupName) }
+            }
+            group?.getString("color") ?: "#aaaaaa"
+        }
+    }
 
     fun getPlayerName(uuid: UUID): String? = usernameCache.get(uuid) {
         runBlocking {
@@ -69,6 +85,7 @@ class DatabaseConnection(app: Puffin) : Service(app) {
 
         playersCollection = db.getCollection("players")
         mapsCollection = db.getCollection("maps")
+        groupsCollection = db.getCollection("groups")
     }
 
     override fun initialize() {
