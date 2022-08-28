@@ -16,6 +16,10 @@ object Utils {
     fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) =
         getAMQPClient().publish(SendChatMessage(player, message, chatType))
 
+    fun sendChat(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) {
+        for (player in players) sendChat(player, message, chatType)
+    }
+
     inline fun catchingTimer(
         name: String? = null,
         daemon: Boolean = false,

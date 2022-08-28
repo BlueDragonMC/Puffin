@@ -3,7 +3,6 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.messages.*
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
-import kotlinx.coroutines.runBlocking
 import java.util.*
 
 class PartyManager(app: ServiceHolder) : Service(app) {
@@ -14,15 +13,13 @@ class PartyManager(app: ServiceHolder) : Service(app) {
         Party(mutableListOf(leader), mutableMapOf(), leader).also { parties.add(it) }
 
     private val UUID.username: String
-        get() {
-            return runBlocking {
-                app.get(DatabaseConnection::class).getPlayerName(this@username) ?: this.toString()
-            }
-        }
+        get() = app.get(DatabaseConnection::class).getPlayerName(this@username) ?: this.toString()
 
-    private fun sendInvitationMessage(player: UUID, partyOwner: UUID) {
-        Utils.sendChat(player,
-            "\n<p2><click:run_command:/party accept $partyOwner><lang:puffin.party.invite.1:'<p1>${partyOwner.username}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>\n")
+    private fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
+        Utils.sendChat(party.members,
+            "\n<p2><lang:puffin.party.invite.other:'<p1>${inviter.username}':'<p1>${invitee.username}'>")
+        Utils.sendChat(invitee,
+            "\n<p2><click:run_command:/party accept $inviter><lang:puffin.party.invite.1:'<p1>${inviter.username}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>\n")
     }
 
     data class Party(val members: MutableList<UUID>, val invitations: MutableMap<UUID, Timer>, var leader: UUID)
@@ -34,7 +31,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
 
         client.subscribe(InvitePlayerToPartyMessage::class) { message ->
             val party = partyOf(message.partyOwner) ?: createParty(message.partyOwner)
-            sendInvitationMessage(message.player, message.partyOwner)
+            sendInvitationMessage(party, message.player, message.partyOwner)
             val timer = catchingTimer(daemon = true, initialDelay = 60_000, period = 60_000) {
                 this.cancel()
                 if (party.invitations.contains(message.player)) {
@@ -50,15 +47,16 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             val party = partyOf(message.partyOwner)
             if (party == null) {
                 Utils.sendChat(message.player, "<red><lang:puffin.party.not_found>")
+                return@subscribe
+            }
+            if (party.invitations.contains(message.player)) {
+                Utils.sendChat(party.members, "\n<p2><lang:puffin.party.join.other:'<p1>${message.player.username}'>")
+                party.members.add(message.player)
+                party.invitations.remove(message.player)
+                Utils.sendChat(message.player,
+                    "\n<p2><lang:puffin.party.join.self:'<p1>${message.partyOwner.username}'>\n")
             } else {
-                if (party.invitations.contains(message.player)) {
-                    party.members.add(message.player)
-                    party.invitations.remove(message.player)
-                    Utils.sendChat(message.player,
-                        "\n<p2><lang:puffin.party.join.self:'<p1>${message.partyOwner.username}'>\n")
-                } else {
-                    Utils.sendChat(message.player, "<red><lang:puffin.party.join.no_invitation>")
-                }
+                Utils.sendChat(message.player, "<red><lang:puffin.party.join.no_invitation>")
             }
         }
 
@@ -70,10 +68,8 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 if (party != null) {
                     if (party.members.contains(message.player)) {
                         party.members.remove(message.player)
-                        party.members.forEach {
-                            Utils.sendChat(it,
-                                "\n<p2><lang:puffin.party.kick.success:'<p1>${message.player.username}'>\n")
-                        }
+                        Utils.sendChat(party.members,
+                            "\n<p2><lang:puffin.party.kick.success:'<p1>${message.player.username}'>\n")
                         Utils.sendChat(message.player, "\n<p2><lang:puffin.party.kick.removed>\n")
                     } else {
                         Utils.sendChat(message.player, "<red><lang:puffin.party.member_not_found>")
@@ -86,7 +82,11 @@ class PartyManager(app: ServiceHolder) : Service(app) {
 
         client.subscribe(PartyTransferMessage::class) { message ->
             val party = partyOf(message.oldOwner)
-            if (party == null || party.leader != message.oldOwner) {
+            if (party == null) {
+                Utils.sendChat(message.oldOwner, "<red><lang:puffin.party.chat.not_found>")
+                return@subscribe
+            }
+            if (party.leader != message.oldOwner) {
                 Utils.sendChat(message.oldOwner, "<red><lang:puffin.party.transfer.not_leader>")
                 return@subscribe
             }
@@ -95,10 +95,8 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 return@subscribe
             }
             party.leader = message.newOwner
-            party.members.forEach {
-                Utils.sendChat(it,
-                    "\n<p2><lang:puffin.party.transfer.success:'<p1>${message.newOwner.username}'>\n")
-            }
+            Utils.sendChat(party.members,
+                "\n<p2><lang:puffin.party.transfer.success:'<p1>${message.newOwner.username}'>\n")
         }
 
         client.subscribe(PartyWarpMessage::class) { message ->
@@ -111,18 +109,21 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                     "\n<red><lang:puffin.party.warp.not_enough_space>\n")
                 return@subscribe
             }
+            val tracker = app.get(PlayerTracker::class)
+            val membersToWarp =
+                party.members.count { tracker.getInstanceOfPlayer(it) != tracker.getInstanceOfPlayer(party.leader) }
             party.members.forEach {
                 if (party.leader != it) client.publish(SendPlayerToInstanceMessage(it, message.instanceId))
+                Utils.sendChat(it,
+                    "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'<p1>${party.leader.username}'>")
             }
         }
 
         client.subscribe(PartyChatMessage::class) { message ->
             val party = partyOf(message.player)
             if (party != null) {
-                party.members.forEach {
-                    Utils.sendChat(it,
-                        "<p3><lang:puffin.party.chat.prefix> <white>${message.player.username}<gray>: <white>${message.message}")
-                }
+                Utils.sendChat(party.members,
+                    "<p3><lang:puffin.party.chat.prefix> <white>${message.player.username}<gray>: <white>${message.message}")
             } else {
                 Utils.sendChat(message.player, "<red><lang:puffin.party.chat.not_found>")
             }

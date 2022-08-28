@@ -30,6 +30,8 @@ dependencies {
     implementation("org.litote.kmongo:kmongo:4.6.1")
     implementation("org.litote.kmongo:kmongo-coroutine:4.6.1")
 
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.1")
+
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.0-RC")
 }
 

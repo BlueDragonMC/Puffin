@@ -4,7 +4,6 @@ import com.bluedragonmc.messages.*
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
-import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.*
 
@@ -20,7 +19,10 @@ class Queue(app: ServiceHolder) : Service(app) {
             startingInstanceTimer?.cancel()
             if (value != null) {
                 startingInstanceTimer =
-                    catchingTimer("instance-creation-timeout", daemon = true, initialDelay = 10_000, period = Long.MAX_VALUE) {
+                    catchingTimer("instance-creation-timeout",
+                        daemon = true,
+                        initialDelay = 10_000,
+                        period = Long.MAX_VALUE) {
                         this.cancel()
                         logger.warn("Instance of game type $field was not created within the timeout period of 10 seconds!")
                         field = null
@@ -76,22 +78,20 @@ class Queue(app: ServiceHolder) : Service(app) {
         val config = app.get(ConfigService::class).config
 
         client.subscribe(RequestAddToQueueMessage::class) { message ->
-            runBlocking {
-                val mapName = message.gameType.mapName
-                val gameSpecificMapFolder = File(File(config.worldsFolder), message.gameType.name)
-                if ((mapName != null && db.getMapInfo(mapName) == null) || // No entry for the map in the database
-                    (mapName == null && (!gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()
-                        ?.isNotEmpty() == false)) // No world folder found
-                ) {
-                    Utils.sendChat(message.player,
-                        "<red><lang:queue.adding.failed:'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
-                } else {
-                    logger.info("${message.player} added to queue for ${message.gameType}")
-                    queue[message.player] = message.gameType
-                    queueEntranceTimes[message.player] = System.currentTimeMillis()
-                    Utils.sendChat(message.player, "<p1><lang:queue.added.game:'${message.gameType.name}'>")
-                    update()
-                }
+            val mapName = message.gameType.mapName
+            val gameSpecificMapFolder = File(File(config.worldsFolder), message.gameType.name)
+            if ((mapName != null && db.getMapInfo(mapName) == null) || // No entry for the map in the database
+                (mapName == null && (!gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()
+                    ?.isNotEmpty() == false)) // No world folder found
+            ) {
+                Utils.sendChat(message.player,
+                    "<red><lang:queue.adding.failed:'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
+            } else {
+                logger.info("${message.player} added to queue for ${message.gameType}")
+                queue[message.player] = message.gameType
+                queueEntranceTimes[message.player] = System.currentTimeMillis()
+                Utils.sendChat(message.player, "<p1><lang:queue.added.game:'${message.gameType.name}'>")
+                update()
             }
         }
 
@@ -109,7 +109,8 @@ class Queue(app: ServiceHolder) : Service(app) {
             // Remove players from the queue if they've been in it for a long time
             queueEntranceTimes.entries.removeAll { (uuid, time) ->
                 if (System.currentTimeMillis() - time > 30_000) {
-                    Utils.sendChat(uuid, "<red><lang:queue.removed.reason:'<dark_gray><lang:queue.removed.reason.timeout>'>")
+                    Utils.sendChat(uuid,
+                        "<red><lang:queue.removed.reason:'<dark_gray><lang:queue.removed.reason.timeout>'>")
                     queue.remove(uuid)
                     return@removeAll true
                 }

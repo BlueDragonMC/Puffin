@@ -3,9 +3,12 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.client.model.Filters
+import kotlinx.coroutines.runBlocking
 import org.bson.Document
 import org.litote.kmongo.coroutine.CoroutineClient
 import org.litote.kmongo.coroutine.CoroutineCollection
@@ -13,6 +16,7 @@ import org.litote.kmongo.coroutine.CoroutineDatabase
 import org.litote.kmongo.coroutine.coroutine
 import org.litote.kmongo.reactivestreams.KMongo
 import java.net.Socket
+import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
 
@@ -24,17 +28,32 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     private lateinit var playersCollection: CoroutineCollection<Document>
     private lateinit var mapsCollection: CoroutineCollection<Document>
 
-    suspend fun getPlayerName(uuid: UUID): String? {
-        val doc = playersCollection.findOneById(uuid.toString()) ?: return null
-        return doc.getString("username")
+    private val builder = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterWrite(Duration.ofMinutes(10))
+
+    private val uuidCache: Cache<String, UUID?> = builder.build()
+    private val usernameCache: Cache<UUID, String?> = builder.build()
+    private val mapDataCache: Cache<String, Document?> = builder.build()
+
+    fun getPlayerName(uuid: UUID): String? = usernameCache.get(uuid) {
+        runBlocking {
+            playersCollection.findOneById(uuid.toString())?.getString("username")
+        }
     }
 
-    suspend fun getPlayerUUID(username: String): UUID? {
-        val doc = playersCollection.findOne(Filters.eq("usernameLower", username)) ?: return null
-        return UUID.fromString(doc.getString("_id"))
+    fun getPlayerUUID(username: String): UUID? = uuidCache.get(username.lowercase()) {
+        runBlocking {
+            playersCollection.findOne(Filters.eq("usernameLower", username))?.getString("_id")
+                ?.let { UUID.fromString(it) }
+        }
     }
 
-    suspend fun getMapInfo(mapName: String) = mapsCollection.findOneById(mapName)
+    fun getMapInfo(mapName: String) = mapDataCache.get(mapName) {
+        runBlocking {
+            mapsCollection.findOneById(mapName)
+        }
+    }
 
     private fun onConnected() {
         val config = app.get(ConfigService::class).config
@@ -65,7 +84,8 @@ class DatabaseConnection(app: Puffin) : Service(app) {
                     .applyToSocketSettings { settings ->
                         settings.connectTimeout(2, TimeUnit.SECONDS)
                         settings.readTimeout(2, TimeUnit.SECONDS)
-                    }.build()).close() // Create a client to verify that MongoDB is fully started and running on this port
+                    }.build())
+                    .close() // Create a client to verify that MongoDB is fully started and running on this port
             } catch (ignored: Throwable) {
                 logger.debug("Waiting 5 seconds to retry connection to MongoDB.")
                 return@catchingTimer
@@ -79,5 +99,11 @@ class DatabaseConnection(app: Puffin) : Service(app) {
 
     override fun close() {
         client.close()
+
+        usernameCache.invalidateAll()
+        usernameCache.cleanUp()
+
+        uuidCache.invalidateAll()
+        uuidCache.cleanUp()
     }
 }
