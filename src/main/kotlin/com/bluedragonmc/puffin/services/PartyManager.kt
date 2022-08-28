@@ -8,7 +8,7 @@ import java.util.*
 class PartyManager(app: ServiceHolder) : Service(app) {
 
     private val parties = mutableSetOf<Party>()
-    private fun partyOf(player: UUID) = parties.find { player in it.members }
+    internal fun partyOf(player: UUID) = parties.find { player in it.members }
     private fun createParty(leader: UUID) =
         Party(mutableListOf(leader), mutableMapOf(), leader).also { parties.add(it) }
 

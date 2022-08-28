@@ -49,11 +49,25 @@ class Queue(app: ServiceHolder) : Service(app) {
                 }
 
                 logger.info("Instance with least empty slots for $gameType: $best")
-                if (gameStateManager.getEmptySlots(best) > 0) {
+                val party = app.get(PartyManager::class).partyOf(player)
+                if (party != null && party.leader != player) {
+                    // Player is queued as a party member, not a leader
+                    queueEntranceTimes.remove(player)
+                    return@removeAll true
+                }
+                if (gameStateManager.getEmptySlots(best) >= (party?.members?.size ?: 1)) {
+                    // There is enough space in the instance for this player and their party (if they're in one)
                     // Send the player to this instance and remove them from the queue
                     logger.info("Found instance for player $player: instanceId=$best, gameType=$gameType")
-                    client.publish(SendPlayerToInstanceMessage(player, best))
                     queueEntranceTimes.remove(player)
+                    if (party != null) {
+                        party.members.forEach { member ->
+                            // Warp in the player's party when they are warped into a game
+                            client.publish(SendPlayerToInstanceMessage(member, best))
+                        }
+                    } else {
+                        client.publish(SendPlayerToInstanceMessage(player, best))
+                    }
                     return@removeAll true
                 }
             }
