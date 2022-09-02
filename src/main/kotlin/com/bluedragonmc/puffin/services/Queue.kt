@@ -12,77 +12,206 @@ class Queue(app: ServiceHolder) : Service(app) {
     private val queue = mutableMapOf<UUID, GameType>()
     private val queueEntranceTimes = mutableMapOf<UUID, Long>()
 
-    private var startingInstanceTimer: Timer? = null
-    internal var startingInstance: GameType? = null
-        set(value) {
-            field = value
-            startingInstanceTimer?.cancel()
-            if (value != null) {
-                startingInstanceTimer =
-                    catchingTimer("instance-creation-timeout",
-                        daemon = true,
-                        initialDelay = 10_000,
-                        period = Long.MAX_VALUE) {
-                        this.cancel()
-                        logger.warn("Instance of game type $field was not created within the timeout period of 10 seconds!")
-                        field = null
-                    }
+    internal data class InstanceRequest(
+        val svc: Queue,
+        val gameType: GameType,
+        val requester: UUID,
+        var attempts: Int = 0,
+    ) {
+
+        private var serverWaitTimer: Timer? = null
+        private var stateWaitTimer: Timer? = null
+
+        var isWaitingForServer: Boolean = false
+            set(value) {
+                field = value
+                // When isWaitingForServer is set to true, wait 10 seconds.
+                // If the request is not honored by then, the field is set
+                // back to false, assuming the server did not honor the request.
+                if (value) {
+                    serverWaitTimer?.cancel()
+                    serverWaitTimer = Timer("server-wait", true)
+                    serverWaitTimer?.schedule(object : TimerTask() {
+                        override fun run() {
+                            isWaitingForServer = false
+                            svc.logger.info("Instance request was not honored after 10 seconds: $this")
+                        }
+                    }, 10_000L)
+                } else {
+                    serverWaitTimer?.cancel()
+                    serverWaitTimer = null
+                }
+            }
+
+        var instanceId: UUID? = null
+        var isWaitingForState: Boolean = false
+            set(value) {
+                field = value
+                // Wait 3 seconds for the server to respond with its game state.
+                // If the server doesn't respond, the request will go back into
+                // its original state.
+                if (value) {
+                    stateWaitTimer?.cancel()
+                    stateWaitTimer = Timer("game-state-msg-wait", true)
+                    stateWaitTimer?.schedule(object : TimerTask() {
+                        override fun run() {
+                            isWaitingForState = false
+                            isWaitingForServer = false
+                            svc.logger.info("Game state message was not received within 3 seconds: $this")
+                        }
+                    }, 3_000L)
+                } else {
+                    stateWaitTimer?.cancel()
+                    stateWaitTimer = null
+                }
+            }
+
+        fun fulfill(instanceId: UUID) {
+            svc.logger.info("Instance request fulfilled with instance ID '$instanceId'.")
+
+            isWaitingForServer = false
+            isWaitingForState = true
+            this.instanceId = instanceId
+        }
+
+        fun complete() {
+            svc.logger.info("Game state received from instance with ID '$instanceId'.")
+            svc.queue.remove(requester)
+            svc.queueEntranceTimes.remove(requester)
+
+            isWaitingForState = false
+
+            synchronized(svc.instanceRequests) {
+                svc.instanceRequests.remove(this)
+            }
+
+            if (!svc.send(requester, instanceId!!)) {
+                Utils.sendChat(requester, "<red><lang:puffin.queue.not_enough_space:'<gray>$instanceId'>")
             }
         }
+    }
+
+    internal val instanceRequests = mutableListOf<InstanceRequest>()
 
     fun update() {
 
         val instanceManager = app.get(InstanceManager::class)
         val gameStateManager = app.get(GameStateManager::class)
-        val client = app.get(MessagingService::class).client
+
+        synchronized(instanceRequests) {
+            val requests = instanceRequests.filter { request ->
+                request.isWaitingForState && gameStateManager.hasState(request.instanceId!!)
+            }
+            requests.forEach(InstanceRequest::complete)
+        }
 
         queue.entries.removeAll { (player, gameType) ->
             val instances = instanceManager.findInstancesOfType(gameType, matchMapName = false, matchGameMode = false)
-            logger.info("Found ${instances.size} instances matching the $player's requested game type: $gameType")
             if (instances.isNotEmpty()) {
+                logger.info("Found ${instances.size} instances of game type: $gameType")
 
+                val party = app.get(PartyManager::class).partyOf(player)
+                val playerSlotsRequired = party?.members?.size ?: 1
                 val (best, _) = instances.keys.associateWith {
                     gameStateManager.getEmptySlots(it)
                 }.filter { it.value > 0 }.entries.minByOrNull { it.value } ?: run {
-                    logger.info("All instances of type $gameType have no empty player slots.")
+                    logger.info("All instances of type $gameType have less than $playerSlotsRequired player slots.")
                     return@removeAll false
                 }
 
                 logger.info("Instance with least empty slots for $gameType: $best")
-                val party = app.get(PartyManager::class).partyOf(player)
                 if (party != null && party.leader != player) {
                     // Player is queued as a party member, not a leader
                     queueEntranceTimes.remove(player)
                     return@removeAll true
                 }
-                if (gameStateManager.getEmptySlots(best) >= (party?.members?.size ?: 1)) {
+                if (gameStateManager.getEmptySlots(best) >= playerSlotsRequired) {
                     // There is enough space in the instance for this player and their party (if they're in one)
                     // Send the player to this instance and remove them from the queue
-                    logger.info("Found instance for player $player: instanceId=$best, gameType=$gameType")
+                    logger.info("Sending player $player to existing instance of type $gameType: $best")
                     queueEntranceTimes.remove(player)
-                    if (party != null) {
-                        party.members.forEach { member ->
-                            // Warp in the player's party when they are warped into a game
-                            client.publish(SendPlayerToInstanceMessage(member, best))
-                        }
-                    } else {
-                        client.publish(SendPlayerToInstanceMessage(player, best))
-                    }
+                    send(player, best)
                     return@removeAll true
                 }
-            }
+            } else logger.info("No instances found of type $gameType.")
             return@removeAll false
         }
-        if (startingInstance != null) return
-        queue.entries.firstOrNull()?.let { (player, gameType) ->
-            logger.info("Starting a new instance for player $player because they could not find any instances running $gameType.")
-            // Create a new instance for the first player in the queue.
-            startingInstance = gameType
-            val (gameServer, instances) = instanceManager.findGameServerWithLeastInstances() ?: return@let
-            logger.info("The GameServer with the least instances is $gameServer with ${instances.size} instances running.")
-            client.publish(RequestCreateInstanceMessage(gameServer, gameType))
-            Utils.sendChat(player, "<p2>Creating a new instance...", ChatType.ACTION_BAR)
+        queue.entries.forEach { (player, gameType) ->
+            Utils.sendChat(player, "<p1>Waiting for instance...", ChatType.ACTION_BAR)
+            synchronized(instanceRequests) {
+                // Don't make duplicate instance requests
+                if (instanceRequests.any { it.gameType == gameType }) return@forEach
+                logger.info("Starting a new instance for player $player with game type: $gameType.")
+                // Create a new instance for the first player in the queue.
+                instanceRequests.add(InstanceRequest(this, gameType, player))
+            }
         }
+        processInstanceRequests()
+    }
+
+    private var lastInstanceRequest: Long = 0L
+
+    private fun processInstanceRequests() {
+        // Hard throttle all instance requests combined to one per 2 seconds.
+        if (System.currentTimeMillis() - lastInstanceRequest < 2000) return
+        lastInstanceRequest = System.currentTimeMillis()
+
+        synchronized(instanceRequests) {
+            instanceRequests.filter { !it.isWaitingForServer && !it.isWaitingForState }.minByOrNull { it.attempts }
+        }?.let { request ->
+
+            val instanceManager = app.get(InstanceManager::class)
+            val client = app.get(MessagingService::class).client
+
+            val (gameServer, _) = instanceManager.findGameServerWithLeastInstances() ?: return@let
+            logger.info("Creating instance on server '$gameServer' from request $request.")
+
+            Utils.sendChat(request.requester, "<p2>Creating instance...", ChatType.ACTION_BAR)
+            client.publish(RequestCreateInstanceMessage(gameServer, request.gameType))
+            request.isWaitingForServer = true
+            request.attempts++
+        }
+
+        // Give up to three attempts before disregarding the request.
+        instanceRequests.removeAll { request ->
+            if (request.attempts > 3) {
+                logger.warn("Removed instance request $request because it failed after 3 attempts.")
+                queue.remove(request.requester)
+                queueEntranceTimes.remove(request.requester)
+                Utils.sendChat(request.requester,
+                    "<red>Failed to create instance! Please try again in a few minutes.",
+                    ChatType.ACTION_BAR)
+                true
+            } else false
+        }
+    }
+
+    private fun send(player: UUID, instanceId: UUID): Boolean {
+
+        val client = app.get(MessagingService::class).client
+        val gameStateManager = app.get(GameStateManager::class)
+        val party = app.get(PartyManager::class).partyOf(player)
+
+        val emptySlots = gameStateManager.getEmptySlots(instanceId)
+        val requiredSlots = party?.members?.size ?: 1
+
+        if (emptySlots < requiredSlots) {
+            logger.info("Attempted to send $requiredSlots player(s) to instance $instanceId, but it only has $emptySlots empty slots.")
+            return false
+        }
+
+        if (party != null) {
+            logger.info("Sending party of player $player (${party.members.size} members) to instance $instanceId.")
+            party.members.forEach { member ->
+                // Warp in the player's party when they are warped into a game
+                client.publish(SendPlayerToInstanceMessage(member, instanceId))
+            }
+        } else {
+            logger.info("Sending player $player to instance $instanceId.")
+            client.publish(SendPlayerToInstanceMessage(player, instanceId))
+        }
+
+        return true
     }
 
     override fun initialize() {
@@ -99,7 +228,7 @@ class Queue(app: ServiceHolder) : Service(app) {
                     ?.isNotEmpty() == false)) // No world folder found
             ) {
                 Utils.sendChat(message.player,
-                    "<red><lang:queue.adding.failed:'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
+                    "<red><lang:queue.adding.failed:'${message.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
             } else {
                 logger.info("${message.player} added to queue for ${message.gameType}")
                 queue[message.player] = message.gameType

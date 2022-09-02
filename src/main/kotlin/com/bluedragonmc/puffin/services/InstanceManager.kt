@@ -30,11 +30,15 @@ class InstanceManager(app: ServiceHolder) : Service(app) {
         queue.update()
 
         // Check if this was the instance requested to start by the Queue system
-        val m = message.gameType
-        val q = queue.startingInstance ?: return
-        if (m.name == q.name && (q.mode == null || m.mode == q.mode) && (q.mapName == null || m.mapName == q.mapName)) {
-            logger.info("The instance requested by the Queue system has started: gameType=$m, instanceId=${message.instanceId}, containerId=${message.containerId}")
-            queue.startingInstance = null
+        val a = message.gameType
+        synchronized(queue.instanceRequests) {
+            queue.instanceRequests.find { request ->
+                val b = request.gameType
+                a.name == b.name && (b.mode == null || a.mode == b.mode) && (b.mapName == null || a.mapName == b.mapName)
+            }
+        }?.let { request ->
+            logger.info("An instance requested by the Queue system has started: gameType=$a, instanceId=${message.instanceId}, containerId=${message.containerId}")
+            request.fulfill(message.instanceId)
         }
     }
 

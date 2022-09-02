@@ -8,6 +8,7 @@ class GameStateManager(app: Puffin) : Service(app) {
 
     private val emptyPlayerSlots = mutableMapOf<UUID, Int>()
 
+    fun hasState(instanceId: UUID) = emptyPlayerSlots.contains(instanceId)
     fun getEmptySlots(instanceId: UUID) = emptyPlayerSlots[instanceId] ?: 0
 
     override fun initialize() {
