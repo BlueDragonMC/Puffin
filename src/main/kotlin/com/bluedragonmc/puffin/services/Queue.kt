@@ -239,10 +239,11 @@ class Queue(app: ServiceHolder) : Service(app) {
         }
 
         client.subscribe(RequestRemoveFromQueueMessage::class) { message ->
-            logger.info("${message.player} removed from queue")
-            queue.remove(message.player)
             queueEntranceTimes.remove(message.player)
-            Utils.sendChat(message.player, "<red><lang:queue.removed>")
+            if (queue.remove(message.player) != null) {
+                logger.info("${message.player} removed from queue")
+                Utils.sendChat(message.player, "<red><lang:queue.removed>")
+            }
         }
 
         catchingTimer("queue-update", daemon = true, initialDelay = 10_000, period = 5_000) {
