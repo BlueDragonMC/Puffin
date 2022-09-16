@@ -154,16 +154,17 @@ class Queue(app: ServiceHolder) : Service(app) {
     private fun processInstanceRequests() {
         // Hard throttle all instance requests combined to one per 2 seconds.
         if (System.currentTimeMillis() - lastInstanceRequest < 2000) return
-        lastInstanceRequest = System.currentTimeMillis()
 
-        synchronized(instanceRequests) {
+        val request = synchronized(instanceRequests) {
             instanceRequests.filter { !it.isWaitingForServer && !it.isWaitingForState }.minByOrNull { it.attempts }
-        }?.let { request ->
+        }
+        if (request != null) {
+            lastInstanceRequest = System.currentTimeMillis()
 
             val instanceManager = app.get(InstanceManager::class)
             val client = app.get(MessagingService::class).client
 
-            val (gameServer, _) = instanceManager.findGameServerWithLeastInstances() ?: return@let
+            val (gameServer, _) = instanceManager.findGameServerWithLeastInstances() ?: return
             logger.info("Creating instance on server '$gameServer' from request $request.")
 
             Utils.sendChat(request.requester, "<p2>Creating instance...", ChatType.ACTION_BAR)
@@ -173,12 +174,12 @@ class Queue(app: ServiceHolder) : Service(app) {
         }
 
         // Give up to three attempts before disregarding the request.
-        instanceRequests.removeAll { request ->
-            if (request.attempts > 3) {
-                logger.warn("Removed instance request $request because it failed after 3 attempts.")
-                queue.remove(request.requester)
-                queueEntranceTimes.remove(request.requester)
-                Utils.sendChat(request.requester,
+        instanceRequests.removeAll {
+            if (it.attempts > 3) {
+                logger.warn("Removed instance request $it because it failed after 3 attempts.")
+                queue.remove(it.requester)
+                queueEntranceTimes.remove(it.requester)
+                Utils.sendChat(it.requester,
                     "<red>Failed to create instance! Please try again in a few minutes.",
                     ChatType.ACTION_BAR)
                 true
