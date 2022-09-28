@@ -106,7 +106,7 @@ class Queue(app: ServiceHolder) : Service(app) {
         }
 
         queue.entries.removeAll { (player, gameType) ->
-            val instances = instanceManager.findInstancesOfType(gameType, matchMapName = false, matchGameMode = false)
+            val instances = instanceManager.findInstancesOfType(gameType, matchMapName = true, matchGameMode = false)
             if (instances.isNotEmpty()) {
                 logger.info("Found ${instances.size} instances of game type: $gameType")
 
