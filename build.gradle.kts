@@ -16,23 +16,35 @@ repositories {
     maven(url = "https://jitpack.io")
 }
 
+val grpcKotlinVersion = "1.3.0"
+val protoVersion = "3.21.9"
+val grpcVersion = "1.50.2"
+
 dependencies {
     testImplementation(kotlin("test"))
 
-    implementation("com.github.bluedragonmc:messages:23a6e3bfc8")
-    implementation("com.github.bluedragonmc:messagingsystem:3abc4b8a49")
+//    implementation("com.github.bluedragonmc:messages:23a6e3bfc8")
+//    implementation("com.github.bluedragonmc:messagingsystem:3abc4b8a49")
 
     implementation("ch.qos.logback:logback:0.5")
     implementation("ch.qos.logback:logback-classic:1.2.11")
 
-    implementation("io.kubernetes:client-java:16.0.0")
+    implementation("io.kubernetes:client-java:16.0.1")
 
-    implementation("org.litote.kmongo:kmongo:4.6.1")
-    implementation("org.litote.kmongo:kmongo-coroutine:4.6.1")
+    implementation("org.litote.kmongo:kmongo:4.7.2")
+    implementation("org.litote.kmongo:kmongo-coroutine:4.7.2")
 
     implementation("com.github.ben-manes.caffeine:caffeine:3.1.1")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.0-RC")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.1")
+
+    implementation("com.bluedragonmc:rpc:1.0") // maven local dependency
+
+    implementation("io.grpc:grpc-services:$grpcVersion")
+    runtimeOnly("io.grpc:grpc-netty:$grpcVersion")
+    implementation("io.grpc:grpc-stub:$grpcVersion")
+    implementation("io.grpc:grpc-kotlin-stub:$grpcKotlinVersion")
+    implementation("com.google.protobuf:protobuf-kotlin:$protoVersion")
 }
 
 tasks.test {

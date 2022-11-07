@@ -1,20 +1,24 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.messages.*
+import com.bluedragonmc.api.grpc.CommonTypes
+import com.bluedragonmc.api.grpc.GsClient
+import com.bluedragonmc.api.grpc.QueueServiceGrpcKt
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
+import com.google.protobuf.Empty
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.*
 
 class Queue(app: ServiceHolder) : Service(app) {
 
-    private val queue = mutableMapOf<UUID, GameType>()
+    private val queue = mutableMapOf<UUID, CommonTypes.GameType>()
     private val queueEntranceTimes = mutableMapOf<UUID, Long>()
 
     internal data class InstanceRequest(
         val svc: Queue,
-        val gameType: GameType,
+        val gameType: CommonTypes.GameType,
         val requester: UUID,
         var attempts: Int = 0,
     ) {
@@ -86,7 +90,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             }
 
             if (!svc.send(requester, instanceId!!)) {
-                Utils.sendChat(requester, "<red><lang:puffin.queue.not_enough_space:'<gray>$instanceId'>")
+                Utils.sendChatAsync(requester, "<red><lang:puffin.queue.not_enough_space:'<gray>$instanceId'>")
             }
         }
     }
@@ -95,7 +99,6 @@ class Queue(app: ServiceHolder) : Service(app) {
 
     fun update() {
 
-        val instanceManager = app.get(InstanceManager::class)
         val gameStateManager = app.get(GameStateManager::class)
 
         synchronized(instanceRequests) {
@@ -106,7 +109,7 @@ class Queue(app: ServiceHolder) : Service(app) {
         }
 
         queue.entries.removeAll { (player, gameType) ->
-            val instances = instanceManager.findInstancesOfType(gameType, matchMapName = true, matchGameMode = false)
+            val instances = app.get(InstanceManager::class).filterRunningInstances(gameType)
             if (instances.isNotEmpty()) {
                 logger.info("Found ${instances.size} instances of game type: $gameType")
 
@@ -137,7 +140,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             return@removeAll false
         }
         queue.entries.forEach { (player, gameType) ->
-            Utils.sendChat(player, "<p1>Waiting for instance...", ChatType.ACTION_BAR)
+            Utils.sendChatAsync(player, "<p1>Waiting for instance...", GsClient.SendChatRequest.ChatType.ACTION_BAR)
             synchronized(instanceRequests) {
                 // Don't make duplicate instance requests
                 if (instanceRequests.any { it.gameType == gameType }) return@forEach
@@ -161,14 +164,14 @@ class Queue(app: ServiceHolder) : Service(app) {
         if (request != null) {
             lastInstanceRequest = System.currentTimeMillis()
 
-            val instanceManager = app.get(InstanceManager::class)
-            val client = app.get(MessagingService::class).client
-
-            val (gameServer, _) = instanceManager.findGameServerWithLeastInstances() ?: return
+            val (gameServer, _) = app.get(InstanceManager::class).findGameServerWithLeastInstances() ?: return
             logger.info("Creating instance on server '$gameServer' from request $request.")
 
-            Utils.sendChat(request.requester, "<p2>Creating instance...", ChatType.ACTION_BAR)
-            client.publish(RequestCreateInstanceMessage(gameServer, request.gameType))
+            Utils.sendChatAsync(request.requester, "<p2>Creating instance...", GsClient.SendChatRequest.ChatType.ACTION_BAR)
+            runBlocking {
+                Utils.getStubToServer(gameServer)
+                    .createInstance(GsClient.CreateInstanceRequest.newBuilder().setGameType(request.gameType).build())
+            }
             request.isWaitingForServer = true
             request.attempts++
         }
@@ -179,9 +182,9 @@ class Queue(app: ServiceHolder) : Service(app) {
                 logger.warn("Removed instance request $it because it failed after 3 attempts.")
                 queue.remove(it.requester)
                 queueEntranceTimes.remove(it.requester)
-                Utils.sendChat(it.requester,
+                Utils.sendChatAsync(it.requester,
                     "<red>Failed to create instance! Please try again in a few minutes.",
-                    ChatType.ACTION_BAR)
+                    GsClient.SendChatRequest.ChatType.ACTION_BAR)
                 true
             } else false
         }
@@ -189,7 +192,6 @@ class Queue(app: ServiceHolder) : Service(app) {
 
     private fun send(player: UUID, instanceId: UUID): Boolean {
 
-        val client = app.get(MessagingService::class).client
         val gameStateManager = app.get(GameStateManager::class)
         val party = app.get(PartyManager::class).partyOf(player)
 
@@ -205,47 +207,17 @@ class Queue(app: ServiceHolder) : Service(app) {
             logger.info("Sending party of player $player (${party.members.size} members) to instance $instanceId.")
             party.members.forEach { member ->
                 // Warp in the player's party when they are warped into a game
-                client.publish(SendPlayerToInstanceMessage(member, instanceId))
+                Utils.sendPlayerToInstance(member, instanceId)
             }
         } else {
             logger.info("Sending player $player to instance $instanceId.")
-            client.publish(SendPlayerToInstanceMessage(player, instanceId))
+            Utils.sendPlayerToInstance(player, instanceId)
         }
 
         return true
     }
 
     override fun initialize() {
-
-        val client = app.get(MessagingService::class).client
-        val db = app.get(DatabaseConnection::class)
-        val config = app.get(ConfigService::class).config
-
-        client.subscribe(RequestAddToQueueMessage::class) { message ->
-            val mapName = message.gameType.mapName
-            val gameSpecificMapFolder = File(File(config.worldsFolder), message.gameType.name)
-            if ((mapName != null && db.getMapInfo(mapName) == null) || // No entry for the map in the database
-                (mapName == null && (!gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()
-                    ?.isNotEmpty() == false)) // No world folder found
-            ) {
-                Utils.sendChat(message.player,
-                    "<red><lang:queue.adding.failed:'${message.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
-            } else {
-                logger.info("${message.player} added to queue for ${message.gameType}")
-                queue[message.player] = message.gameType
-                queueEntranceTimes[message.player] = System.currentTimeMillis()
-                Utils.sendChat(message.player, "<p1><lang:queue.added.game:'${message.gameType.name}'>")
-                update()
-            }
-        }
-
-        client.subscribe(RequestRemoveFromQueueMessage::class) { message ->
-            queueEntranceTimes.remove(message.player)
-            if (queue.remove(message.player) != null) {
-                logger.info("${message.player} removed from queue")
-                Utils.sendChat(message.player, "<red><lang:queue.removed>")
-            }
-        }
 
         catchingTimer("queue-update", daemon = true, initialDelay = 10_000, period = 5_000) {
             // Manually update the queue every 5 seconds in case of a messaging failure or unexpected delay
@@ -254,7 +226,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             // Remove players from the queue if they've been in it for a long time
             queueEntranceTimes.entries.removeAll { (uuid, time) ->
                 if (System.currentTimeMillis() - time > 30_000) {
-                    Utils.sendChat(uuid,
+                    Utils.sendChatAsync(uuid,
                         "<red><lang:queue.removed.reason:'<dark_gray><lang:queue.removed.reason.timeout>'>")
                     queue.remove(uuid)
                     return@removeAll true
@@ -265,4 +237,43 @@ class Queue(app: ServiceHolder) : Service(app) {
     }
 
     override fun close() {}
+
+    inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
+        override suspend fun addToQueue(request: com.bluedragonmc.api.grpc.Queue.AddToQueueRequest): Empty {
+
+            val db = app.get(DatabaseConnection::class)
+            val config = app.get(ConfigService::class).config
+
+            val mapName = request.gameType.mapName
+            val uuid = UUID.fromString(request.playerUuid)
+            val gameSpecificMapFolder = File(File(config.worldsFolder), request.gameType.name)
+
+            if ((mapName != null && db.getMapInfo(mapName) == null) || // No entry for the map in the database
+                (mapName == null && (!gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()
+                    ?.isNotEmpty() == false)) // No world folder found
+            ) {
+                Utils.sendChat(uuid,
+                    "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
+            } else {
+                logger.info("${request.playerUuid} added to queue for ${request.gameType}")
+                queue[uuid] = request.gameType
+                queueEntranceTimes[uuid] = System.currentTimeMillis()
+                Utils.sendChat(uuid, "<p1><lang:queue.added.game:'${request.gameType.name}'>")
+                update()
+            }
+
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun removeFromQueue(request: com.bluedragonmc.api.grpc.Queue.RemoveFromQueueRequest): Empty {
+            val uuid = UUID.fromString(request.playerUuid)
+            queueEntranceTimes.remove(uuid)
+            if (queue.remove(uuid) != null) {
+                logger.info("$uuid was removed from the queue.")
+                Utils.sendChat(uuid, "<red><lang:queue.removed>")
+            }
+
+            return Empty.getDefaultInstance()
+        }
+    }
 }

@@ -1,23 +1,90 @@
 package com.bluedragonmc.puffin.util
 
-import com.bluedragonmc.messages.ChatType
-import com.bluedragonmc.messages.SendChatMessage
-import com.bluedragonmc.puffin.services.MessagingService
+import com.bluedragonmc.api.grpc.GsClient.SendChatRequest.ChatType
+import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
+import com.bluedragonmc.api.grpc.sendChatRequest
+import com.bluedragonmc.puffin.app.Puffin
+import com.bluedragonmc.puffin.services.InstanceManager
+import com.bluedragonmc.puffin.services.PlayerTracker
 import com.bluedragonmc.puffin.services.Service
 import com.bluedragonmc.puffin.services.ServiceHolder
+import com.github.benmanes.caffeine.cache.Caffeine
+import io.grpc.ManagedChannel
+import io.grpc.ManagedChannelBuilder
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.time.Duration
 import java.util.*
 import kotlin.concurrent.fixedRateTimer
 
 object Utils {
     lateinit var app: ServiceHolder
 
-    private fun getAMQPClient() = app.get(MessagingService::class).client
+    private val channels = Caffeine.newBuilder()
+        .expireAfterAccess(Duration.ofMinutes(5))
+        .expireAfterWrite(Duration.ofMinutes(10))
+        .build<String, ManagedChannel>()
 
-    fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) =
-        getAMQPClient().publish(SendChatMessage(player, message, chatType))
+    fun getChannelToPlayer(player: UUID): ManagedChannel {
+        val instance = app.get(PlayerTracker::class).getInstanceOfPlayer(player)!!
+        val serverName = app.get(InstanceManager::class).getGameServerOf(instance)!!
+        return getChannelToServer(serverName)
+    }
 
-    fun sendChat(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) {
+    fun getChannelToServer(serverName: String): ManagedChannel {
+        val addr = app.get(InstanceManager::class).getGameServers().firstOrNull {
+            it.name == serverName
+        }?.address
+        return channels.get(addr) { addr ->
+            ManagedChannelBuilder.forAddress(addr, 50051).usePlaintext().build()
+        }
+    }
+
+    fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub {
+        return GsClientServiceGrpcKt.GsClientServiceCoroutineStub(
+            getChannelToServer(serverName)
+        )
+    }
+
+    fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub {
+        return GsClientServiceGrpcKt.GsClientServiceCoroutineStub(
+            getChannelToPlayer(player)
+        )
+    }
+
+    suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) {
+        val stub = getStubToPlayer(player)
+        stub.sendChat(sendChatRequest {
+            this.playerUuid = player.toString()
+            this.message = message
+            this.chatType = chatType
+        })
+    }
+
+    fun sendChatBlocking(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) = runBlocking {
+        sendChat(player, message, chatType)
+    }
+
+    fun sendChatAsync(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) = Puffin.IO.launch {
+        sendChat(player, message, chatType)
+    }
+
+    suspend fun sendChat(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) {
         for (player in players) sendChat(player, message, chatType)
+    }
+
+    fun sendChatBlocking(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) = runBlocking {
+        for (player in players) sendChat(player, message, chatType)
+    }
+
+    fun sendChatAsync(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) = Puffin.IO.launch {
+        sendChat(players, message, chatType)
+    }
+
+    fun sendPlayerToInstance(player: UUID, instanceId: UUID) {
+//        val serverName = app.get(InstanceManager::class).getGameServerOf(instanceId)!!
+//        val channel = getStubToPlayer(player)
+        TODO("Not implemented yet")
     }
 
     inline fun catchingTimer(

@@ -3,6 +3,8 @@ package com.bluedragonmc.puffin.app
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.services.*
 import com.bluedragonmc.puffin.util.Utils
+import io.grpc.ServerBuilder
+import io.grpc.protobuf.services.ProtoReflectionService
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,21 +50,43 @@ class Puffin : ServiceHolder {
     override fun unregister(type: KClass<out Service>) = services.removeIf { type.isInstance(it) }
 
     fun initialize() {
+
         INSTANCE = this
         val app = this
         val start = System.nanoTime()
+        val port = 50051
+
+        val instanceManager = InstanceManager(app)
+        val queue = Queue(app)
+        val gameStateManager = GameStateManager(app)
+        val partyManager = PartyManager(app)
+        val playerTracker = PlayerTracker(app)
+
+        val grpcServer = ServerBuilder.forPort(port)
+            .addService(instanceManager.ServerDiscoveryService())
+            .addService(instanceManager.ServerTrackerService())
+            .addService(instanceManager.InstanceService())
+            .addService(queue.QueueService())
+            .addService(gameStateManager.GameStateService())
+            .addService(partyManager.PartyService())
+            .addService(playerTracker.PlayerTrackerService())
+            .addService(ProtoReflectionService.newInstance())
+            .build()
+
+        grpcServer.start()
+        logger.info("gRPC server started on port $port.")
+
         register(ConfigService(app))
         register(DatabaseConnection(app))
-        register(MessagingService(app)).onConnected {
-            register(InstanceManager(app))
-            register(Queue(app))
-            register(GameStateManager(app))
-            register(PlayerTracker(app))
-            register(PartyManager(app))
-            register(Utils.UtilsService(app))
-            logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
-        }
-        register(ServiceDiscovery(app))
+        register(Utils.UtilsService(app))
+        register(playerTracker)
+        register(instanceManager)
+        register(queue)
+        register(gameStateManager)
+        register(partyManager)
+
+        logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
+        grpcServer.awaitTermination()
     }
 
     companion object {
