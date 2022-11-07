@@ -1,8 +1,10 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.messages.GameStateUpdateMessage
+import com.bluedragonmc.api.grpc.GameStateServiceGrpcKt
+import com.bluedragonmc.api.grpc.ServerTracking
 import com.bluedragonmc.puffin.app.Puffin
-import java.util.UUID
+import com.google.protobuf.Empty
+import java.util.*
 
 class GameStateManager(app: Puffin) : Service(app) {
 
@@ -11,15 +13,14 @@ class GameStateManager(app: Puffin) : Service(app) {
     fun hasState(instanceId: UUID) = emptyPlayerSlots.contains(instanceId)
     fun getEmptySlots(instanceId: UUID) = emptyPlayerSlots[instanceId] ?: 0
 
-    override fun initialize() {
-        val client = app.get(MessagingService::class).client
-        val queue = app.get(Queue::class)
+    inner class GameStateService : GameStateServiceGrpcKt.GameStateServiceCoroutineImplBase() {
+        override suspend fun updateGameState(request: ServerTracking.GameStateUpdateRequest): Empty {
 
-        client.subscribe(GameStateUpdateMessage::class) { message ->
-            emptyPlayerSlots[message.instanceId] = message.emptyPlayerSlots
+            val queue = app.get(Queue::class)
+            emptyPlayerSlots[UUID.fromString(request.instanceUuid)] = request.gameState.openSlots
             queue.update()
+
+            return Empty.getDefaultInstance()
         }
     }
-
-    override fun close() { }
 }

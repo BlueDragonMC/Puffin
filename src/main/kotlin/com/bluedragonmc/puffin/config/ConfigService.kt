@@ -10,9 +10,7 @@ class ConfigService(app: ServiceHolder) : Service(app) {
     private fun readConfig() = PuffinConfig(
         System.getenv("PUFFIN_WORLD_FOLDER"),
         System.getenv("PUFFIN_MONGO_HOSTNAME") ?: "mongo",
-        System.getenv("PUFFIN_MONGO_PORT")?.toInt() ?: 27017,
-        System.getenv("PUFFIN_AMQP_HOSTNAME") ?: "rabbitmq",
-        System.getenv("PUFFIN_AMQP_PORT")?.toInt() ?: 5672,
+        System.getenv("PUFFIN_MONGO_PORT")?.toInt() ?: 27017
     )
 
     override fun initialize() {

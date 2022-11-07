@@ -1,44 +1,83 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.messages.PlayerLogoutMessage
-import com.bluedragonmc.messages.QueryPlayerMessage
-import com.bluedragonmc.messages.SendPlayerToInstanceMessage
-import com.bluedragonmc.messagingsystem.message.RPCErrorMessage
+import com.bluedragonmc.api.grpc.PlayerTrackerGrpcKt
+import com.bluedragonmc.api.grpc.PlayerTrackerOuterClass
+import com.bluedragonmc.api.grpc.queryPlayerResponse
+import com.google.protobuf.Empty
 import kotlinx.coroutines.runBlocking
-import java.util.UUID
+import java.util.*
+import java.util.function.Consumer
 
 class PlayerTracker(app: ServiceHolder) : Service(app) {
 
-    private val playerLocations = mutableMapOf<UUID, UUID>()
+    private val playerInstances = mutableMapOf<UUID, UUID>()
 
-    override fun initialize() {
-        val client = app.get(MessagingService::class).client
+    private val logoutActions = mutableListOf<Consumer<UUID>>()
 
-        client.subscribe(SendPlayerToInstanceMessage::class) { message ->
-            playerLocations[message.player] = message.instance
-        }
-
-        client.subscribe(PlayerLogoutMessage::class) { message ->
-            if (playerLocations.remove(message.player) == null) logger.warn("Player logged out without a recorded instance: uuid=${message.player}")
-        }
-
-        client.subscribeRPC(QueryPlayerMessage::class) { message ->
-            return@subscribeRPC if (message.playerUUID != null) {
-                val playerName = runBlocking { app.get(DatabaseConnection::class).getPlayerName(message.playerUUID!!) }
-                val found = playerLocations.containsKey(message.playerUUID)
-                QueryPlayerMessage.Response(found, playerName, message.playerUUID)
-            } else if (message.playerName != null) {
-                val uuid = runBlocking { app.get(DatabaseConnection::class).getPlayerUUID(message.playerName!!) }
-                val found = playerLocations.containsKey(uuid)
-                QueryPlayerMessage.Response(found, message.playerName, uuid)
-            } else RPCErrorMessage("playerUUID and playerName are both null. Can't determine the target player.")
-        }
-    }
-
-    fun getPlayersInInstance(instanceId: UUID) = playerLocations.filter { it.value == instanceId }.map { it.key }
-    fun getInstanceOfPlayer(uuid: UUID) = playerLocations[uuid]
+    fun getPlayersInInstance(instanceId: UUID) = playerInstances.filter { it.value == instanceId }.map { it.key }
+    fun getInstanceOfPlayer(uuid: UUID) = playerInstances[uuid]
 
     override fun close() {
-        playerLocations.clear()
+        playerInstances.clear()
+    }
+
+    fun onLogout(action: Consumer<UUID>) {
+        logoutActions.add(action)
+    }
+
+    inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
+        override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty {
+            // Called when a player logs into a proxy.
+            logger.info("Login > ${request.username} (${request.uuid})")
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun playerLogout(request: PlayerTrackerOuterClass.PlayerLogoutRequest): Empty {
+            // Called when a player logs out of or otherwise disconnects from a proxy.
+            logger.info("Logout > ${request.username} (${request.uuid})")
+            logoutActions.forEach { it.accept(UUID.fromString(request.uuid)) }
+            if (playerInstances.remove(UUID.fromString(request.uuid)) == null)
+                logger.warn("Player logged out without a recorded instance: uuid=${request.uuid}")
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun playerInstanceChange(request: PlayerTrackerOuterClass.PlayerInstanceChangeRequest): Empty {
+            // Called when a player changes instances on the same backend server.
+            playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.instanceId)
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun playerTransfer(request: PlayerTrackerOuterClass.PlayerTransferRequest): Empty {
+            // Called when a player changes backend servers (including initial routing).
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun queryPlayer(request: PlayerTrackerOuterClass.PlayerQueryRequest): PlayerTrackerOuterClass.QueryPlayerResponse {
+            when(request.identityCase) {
+                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.USERNAME -> {
+                    return queryPlayerResponse {
+                        username = request.username
+                        val foundUuid = runBlocking { app.get(DatabaseConnection::class).getPlayerUUID(username) }
+                        foundUuid?.let {
+                            uuid = it.toString()
+                            isOnline = playerInstances.containsKey(it)
+                        }
+                    }
+                }
+                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.UUID -> {
+                    val uuidIn = UUID.fromString(request.uuid)
+                    return queryPlayerResponse {
+                        uuid = request.uuid
+                        isOnline = playerInstances.containsKey(uuidIn)
+                        val foundUsername = runBlocking { app.get(DatabaseConnection::class).getPlayerName(uuidIn) }
+                        foundUsername?.let {
+                            username = it
+                        }
+                    }
+                }
+                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.IDENTITY_NOT_SET -> error("No identity given!")
+                null -> error("No identity given!")
+            }
+        }
     }
 }
