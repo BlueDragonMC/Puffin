@@ -10,11 +10,20 @@ import java.util.function.Consumer
 
 class PlayerTracker(app: ServiceHolder) : Service(app) {
 
+    /**
+     * A map of player UUIDs to instance UUIDs
+     */
     private val playerInstances = mutableMapOf<UUID, UUID>()
+
+    /**
+     * A map of player UUIDs to the k8s pod name of the proxy they're on.
+     */
+    private val playerProxies = mutableMapOf<UUID, String>()
 
     private val logoutActions = mutableListOf<Consumer<UUID>>()
 
     fun getPlayersInInstance(instanceId: UUID) = playerInstances.filter { it.value == instanceId }.map { it.key }
+    fun getProxyOfPlayer(player: UUID) = playerProxies[player]
     fun getInstanceOfPlayer(uuid: UUID) = playerInstances[uuid]
 
     override fun close() {
@@ -29,6 +38,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
         override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty {
             // Called when a player logs into a proxy.
             logger.info("Login > ${request.username} (${request.uuid})")
+            playerProxies[UUID.fromString(request.uuid)] = request.proxyPodName
             return Empty.getDefaultInstance()
         }
 
@@ -36,8 +46,13 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             // Called when a player logs out of or otherwise disconnects from a proxy.
             logger.info("Logout > ${request.username} (${request.uuid})")
             logoutActions.forEach { it.accept(UUID.fromString(request.uuid)) }
+
             if (playerInstances.remove(UUID.fromString(request.uuid)) == null)
                 logger.warn("Player logged out without a recorded instance: uuid=${request.uuid}")
+
+            if (playerProxies.remove(UUID.fromString(request.uuid)) == null)
+                logger.warn("Player logged out without a recorded proxy server: uuid=${request.uuid}")
+
             return Empty.getDefaultInstance()
         }
 

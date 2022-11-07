@@ -35,10 +35,10 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.1")
 
-    implementation("com.bluedragonmc:rpc:1.0") // maven local dependency
+    implementation("com.github.bluedragonmc:rpc:605f302179")
 
     implementation("io.grpc:grpc-services:$grpcVersion")
-    runtimeOnly("io.grpc:grpc-netty:$grpcVersion")
+    implementation("io.grpc:grpc-netty:$grpcVersion")
     implementation("io.grpc:grpc-stub:$grpcVersion")
     implementation("io.grpc:grpc-kotlin-stub:$grpcKotlinVersion")
     implementation("com.google.protobuf:protobuf-kotlin:$protoVersion")
