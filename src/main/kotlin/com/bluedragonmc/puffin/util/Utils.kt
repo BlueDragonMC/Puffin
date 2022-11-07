@@ -2,12 +2,11 @@ package com.bluedragonmc.puffin.util
 
 import com.bluedragonmc.api.grpc.GsClient.SendChatRequest.ChatType
 import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
+import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
 import com.bluedragonmc.api.grpc.sendChatRequest
+import com.bluedragonmc.api.grpc.sendPlayerRequest
 import com.bluedragonmc.puffin.app.Puffin
-import com.bluedragonmc.puffin.services.InstanceManager
-import com.bluedragonmc.puffin.services.PlayerTracker
-import com.bluedragonmc.puffin.services.Service
-import com.bluedragonmc.puffin.services.ServiceHolder
+import com.bluedragonmc.puffin.services.*
 import com.github.benmanes.caffeine.cache.Caffeine
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
@@ -39,6 +38,11 @@ object Utils {
             ManagedChannelBuilder.forAddress(addr, 50051).usePlaintext().build()
         }
     }
+
+    fun getChannelToProxyOf(player: UUID): ManagedChannel? =
+        app.get(ProxyServiceDiscovery::class).getProxyIP(player)?.let {
+            ManagedChannelBuilder.forAddress(it, 50051).usePlaintext().build()
+        }
 
     fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub {
         return GsClientServiceGrpcKt.GsClientServiceCoroutineStub(
@@ -77,14 +81,20 @@ object Utils {
         for (player in players) sendChat(player, message, chatType)
     }
 
-    fun sendChatAsync(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) = Puffin.IO.launch {
-        sendChat(players, message, chatType)
-    }
+    fun sendChatAsync(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) =
+        Puffin.IO.launch {
+            sendChat(players, message, chatType)
+        }
 
-    fun sendPlayerToInstance(player: UUID, instanceId: UUID) {
-//        val serverName = app.get(InstanceManager::class).getGameServerOf(instanceId)!!
-//        val channel = getStubToPlayer(player)
-        TODO("Not implemented yet")
+    suspend fun sendPlayerToInstance(player: UUID, instanceId: UUID) {
+        val channel = getChannelToProxyOf(player) ?: return
+        val server = app.get(InstanceManager::class).getGameServerOf(instanceId)
+        val stub = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
+        stub.sendPlayer(sendPlayerRequest {
+            playerUuid = player.toString()
+            serverName = server!!
+            this.instanceId = instanceId.toString()
+        })
     }
 
     inline fun catchingTimer(

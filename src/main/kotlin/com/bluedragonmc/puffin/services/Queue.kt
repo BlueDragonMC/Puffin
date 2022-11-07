@@ -3,10 +3,12 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.CommonTypes
 import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.api.grpc.QueueServiceGrpcKt
+import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.google.protobuf.Empty
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.*
@@ -78,7 +80,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             this.instanceId = instanceId
         }
 
-        fun complete() {
+        suspend fun complete() {
             svc.logger.info("Game state received from instance with ID '$instanceId'.")
             svc.queue.remove(requester)
             svc.queueEntranceTimes.remove(requester)
@@ -105,7 +107,11 @@ class Queue(app: ServiceHolder) : Service(app) {
             val requests = instanceRequests.filter { request ->
                 request.isWaitingForState && gameStateManager.hasState(request.instanceId!!)
             }
-            requests.forEach(InstanceRequest::complete)
+            requests.forEach {
+                Puffin.IO.launch {
+                    it.complete()
+                }
+            }
         }
 
         queue.entries.removeAll { (player, gameType) ->
@@ -133,7 +139,9 @@ class Queue(app: ServiceHolder) : Service(app) {
                     // Send the player to this instance and remove them from the queue
                     logger.info("Sending player $player to existing instance of type $gameType: $best")
                     queueEntranceTimes.remove(player)
-                    send(player, best)
+                    Puffin.IO.launch {
+                        send(player, best)
+                    }
                     return@removeAll true
                 }
             } else logger.info("No instances found of type $gameType.")
@@ -190,7 +198,7 @@ class Queue(app: ServiceHolder) : Service(app) {
         }
     }
 
-    private fun send(player: UUID, instanceId: UUID): Boolean {
+    private suspend fun send(player: UUID, instanceId: UUID): Boolean {
 
         val gameStateManager = app.get(GameStateManager::class)
         val party = app.get(PartyManager::class).partyOf(player)

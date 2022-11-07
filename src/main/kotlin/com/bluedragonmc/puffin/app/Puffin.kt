@@ -79,6 +79,7 @@ class Puffin : ServiceHolder {
         register(ConfigService(app))
         register(DatabaseConnection(app))
         register(Utils.UtilsService(app))
+        register(ProxyServiceDiscovery(app))
         register(playerTracker)
         register(instanceManager)
         register(queue)
