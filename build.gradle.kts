@@ -23,11 +23,8 @@ val grpcVersion = "1.50.2"
 dependencies {
     testImplementation(kotlin("test"))
 
-//    implementation("com.github.bluedragonmc:messages:23a6e3bfc8")
-//    implementation("com.github.bluedragonmc:messagingsystem:3abc4b8a49")
-
     implementation("ch.qos.logback:logback:0.5")
-    implementation("ch.qos.logback:logback-classic:1.2.11")
+    implementation("ch.qos.logback:logback-classic:1.4.4")
 
     implementation("io.kubernetes:client-java:16.0.1")
 

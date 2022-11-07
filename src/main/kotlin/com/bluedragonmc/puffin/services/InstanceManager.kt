@@ -122,16 +122,20 @@ class InstanceManager(app: Puffin) : Service(app) {
                     name = "Lobby"
                     selectors += GameTypeFieldSelector.GAME_NAME
                 }
-            ).mapNotNull { getGameServerOf(it.key) }
+            ).keys.associateWith { getGameServerOf(it) }.filter { it.value != null }
 
             return findLobbyResponse {
                 found = false
-                for (lobby in lobbies) {
-                    val info = gs.find { it.name == lobby } ?: continue
+                for ((instanceId, gameServer) in lobbies) {
+                    if (request.includeServerNamesCount > 0 && gameServer !in request.includeServerNamesList) continue
+                    if (request.excludeServerNamesCount > 0 && gameServer in request.excludeServerNamesList) continue
+                    val info = gs.find { it.name == gameServer } ?: continue
                     found = true
-                    serverName = lobby
+                    serverName = gameServer!!
                     ip = info.address
                     port = info.port ?: 25565
+                    instanceUuid = instanceId.toString()
+                    break
                 }
             }
         }
@@ -195,6 +199,7 @@ class InstanceManager(app: Puffin) : Service(app) {
     }
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
+        logger.info("Instance created: ${request.serverName}/${request.instanceUuid}")
         val queue = app.get(Queue::class)
         // Add to map of instances to game types
         val instanceId = UUID.fromString(request.instanceUuid)
@@ -223,6 +228,7 @@ class InstanceManager(app: Puffin) : Service(app) {
     }
 
     private fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
+        logger.info("Instance removed: ${request.serverName}/${request.instanceUuid}")
         val instanceId = UUID.fromString(request.instanceUuid)
         gameServers[request.serverName]?.remove(instanceId)
         instanceTypes.remove(instanceId)
