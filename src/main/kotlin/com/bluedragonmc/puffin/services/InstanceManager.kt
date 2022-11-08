@@ -5,10 +5,12 @@ import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.*
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
 import io.kubernetes.client.util.Config
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
+import java.time.Duration
 import java.util.*
 
 class InstanceManager(app: Puffin) : Service(app) {
@@ -28,8 +30,10 @@ class InstanceManager(app: Puffin) : Service(app) {
      */
     private val instanceTypes = mutableMapOf<UUID, GameType>()
 
+    private val pingCache = Caffeine.newBuilder().expireAfterWrite(Duration.ofMinutes(5)).build<String, Unit>()
+
     init {
-        Utils.catchingTimer("agones-gameserver-update", daemon = true, initialDelay = 5_000, period = 5_000) {
+        Utils.catchingTimer("Agones SD", daemon = true, initialDelay = 5_000, period = 5_000) {
             val response = client.list()
             if (response.httpStatusCode >= 400) {
                 error("Kubernetes returned HTTP error code: ${response.httpStatusCode}: ${response.status?.status}, ${response.status?.message}")
@@ -41,6 +45,14 @@ class InstanceManager(app: Puffin) : Service(app) {
                 removed.forEach(::processServerRemoved)
                 added.forEach(::processServerAdded)
                 kubernetesObjects = objects
+            }
+        }
+        Utils.catchingTimer("Game Server Ping Check", daemon = true, initialDelay = 30_000, period = 10_000) {
+            ArrayList(gameServers.keys).forEach { serverName ->
+                if (pingCache.getIfPresent(serverName) == null) {
+                    logger.warn("Game Server $serverName stopped pinging for ~5 minutes and was removed from the list of GameServers.")
+                    gameServers.remove(serverName)
+                }
             }
         }
     }
@@ -146,6 +158,7 @@ class InstanceManager(app: Puffin) : Service(app) {
             // Called when a new game server starts up and sends a ping
             logger.info("New game server started and pinged: ${request.serverName}")
             gameServers[request.serverName] = mutableSetOf()
+            pingCache.put(request.serverName, Unit)
             return Empty.getDefaultInstance()
         }
 
@@ -180,6 +193,8 @@ class InstanceManager(app: Puffin) : Service(app) {
                 )
             }
 
+            pingCache.put(request.serverName, Unit)
+
             return Empty.getDefaultInstance()
         }
     }
@@ -200,7 +215,6 @@ class InstanceManager(app: Puffin) : Service(app) {
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
         logger.info("Instance created: ${request.serverName}/${request.instanceUuid}")
-        val queue = app.get(Queue::class)
         // Add to map of instances to game types
         val instanceId = UUID.fromString(request.instanceUuid)
         instanceTypes[instanceId] = request.gameType
@@ -211,20 +225,6 @@ class InstanceManager(app: Puffin) : Service(app) {
             gameServers[request.serverName] = mutableSetOf()
         }
         gameServers[request.serverName]!!.add(instanceId)
-
-        queue.update()
-
-        // Check if this was the instance requested to start by the Queue system
-        val a = request.gameType
-        synchronized(queue.instanceRequests) {
-            queue.instanceRequests.find { request ->
-                val b = request.gameType
-                a.name == b.name && (b.mode == null || a.mode == b.mode) && (b.mapName == null || a.mapName == b.mapName)
-            }
-        }?.let { instanceRequest ->
-            logger.info("An instance requested by the Queue system has started. Game type: $a, Instance ID: ${instanceId}, Game server name: ${request.serverName}")
-            instanceRequest.fulfill(instanceId)
-        }
     }
 
     private fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
@@ -232,13 +232,5 @@ class InstanceManager(app: Puffin) : Service(app) {
         val instanceId = UUID.fromString(request.instanceUuid)
         gameServers[request.serverName]?.remove(instanceId)
         instanceTypes.remove(instanceId)
-    }
-
-    override fun initialize() {
-
-    }
-
-    override fun close() {
-
     }
 }

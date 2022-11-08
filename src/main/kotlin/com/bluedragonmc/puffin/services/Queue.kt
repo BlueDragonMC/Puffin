@@ -3,11 +3,14 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.CommonTypes
 import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.api.grpc.QueueServiceGrpcKt
+import com.bluedragonmc.api.grpc.createInstanceRequest
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
+import com.google.protobuf.Descriptors.FieldDescriptor
 import com.google.protobuf.Empty
+import com.google.protobuf.FieldDescriptorProtoKt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -18,101 +21,9 @@ class Queue(app: ServiceHolder) : Service(app) {
     private val queue = mutableMapOf<UUID, CommonTypes.GameType>()
     private val queueEntranceTimes = mutableMapOf<UUID, Long>()
 
-    internal data class InstanceRequest(
-        val svc: Queue,
-        val gameType: CommonTypes.GameType,
-        val requester: UUID,
-        var attempts: Int = 0,
-    ) {
-
-        private var serverWaitTimer: Timer? = null
-        private var stateWaitTimer: Timer? = null
-
-        var isWaitingForServer: Boolean = false
-            set(value) {
-                field = value
-                // When isWaitingForServer is set to true, wait 10 seconds.
-                // If the request is not honored by then, the field is set
-                // back to false, assuming the server did not honor the request.
-                if (value) {
-                    serverWaitTimer?.cancel()
-                    serverWaitTimer = Timer("server-wait", true)
-                    serverWaitTimer?.schedule(object : TimerTask() {
-                        override fun run() {
-                            isWaitingForServer = false
-                            svc.logger.info("Instance request was not honored after 10 seconds: $this")
-                        }
-                    }, 10_000L)
-                } else {
-                    serverWaitTimer?.cancel()
-                    serverWaitTimer = null
-                }
-            }
-
-        var instanceId: UUID? = null
-        var isWaitingForState: Boolean = false
-            set(value) {
-                field = value
-                // Wait 3 seconds for the server to respond with its game state.
-                // If the server doesn't respond, the request will go back into
-                // its original state.
-                if (value) {
-                    stateWaitTimer?.cancel()
-                    stateWaitTimer = Timer("game-state-msg-wait", true)
-                    stateWaitTimer?.schedule(object : TimerTask() {
-                        override fun run() {
-                            isWaitingForState = false
-                            isWaitingForServer = false
-                            svc.logger.info("Game state message was not received within 3 seconds: $this")
-                        }
-                    }, 3_000L)
-                } else {
-                    stateWaitTimer?.cancel()
-                    stateWaitTimer = null
-                }
-            }
-
-        fun fulfill(instanceId: UUID) {
-            svc.logger.info("Instance request fulfilled with instance ID '$instanceId'.")
-
-            isWaitingForServer = false
-            isWaitingForState = true
-            this.instanceId = instanceId
-        }
-
-        suspend fun complete() {
-            svc.logger.info("Game state received from instance with ID '$instanceId'.")
-            svc.queue.remove(requester)
-            svc.queueEntranceTimes.remove(requester)
-
-            isWaitingForState = false
-
-            synchronized(svc.instanceRequests) {
-                svc.instanceRequests.remove(this)
-            }
-
-            if (!svc.send(requester, instanceId!!)) {
-                Utils.sendChatAsync(requester, "<red><lang:puffin.queue.not_enough_space:'<gray>$instanceId'>")
-            }
-        }
-    }
-
-    internal val instanceRequests = mutableListOf<InstanceRequest>()
-
     fun update() {
 
         val gameStateManager = app.get(GameStateManager::class)
-
-        synchronized(instanceRequests) {
-            val requests = instanceRequests.filter { request ->
-                request.isWaitingForState && gameStateManager.hasState(request.instanceId!!)
-            }
-            requests.forEach {
-                Puffin.IO.launch {
-                    it.complete()
-                }
-            }
-        }
 
         queue.entries.removeAll { (player, gameType) ->
             val instances = app.get(InstanceManager::class).filterRunningInstances(gameType)
@@ -137,64 +48,53 @@ class Queue(app: ServiceHolder) : Service(app) {
                 if (gameStateManager.getEmptySlots(best) >= playerSlotsRequired) {
                     // There is enough space in the instance for this player and their party (if they're in one)
                     // Send the player to this instance and remove them from the queue
-                    logger.info("Sending player $player to existing instance of type $gameType: $best")
+                    logger.info("Sending player $player to existing instance of type GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}): $best")
                     queueEntranceTimes.remove(player)
                     Puffin.IO.launch {
                         send(player, best)
                     }
                     return@removeAll true
                 }
-            } else logger.info("No instances found of type $gameType.")
+            } else logger.info("No instances found of type GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}).")
             return@removeAll false
         }
         queue.entries.forEach { (player, gameType) ->
-            Utils.sendChatAsync(player, "<p1>Waiting for instance...", GsClient.SendChatRequest.ChatType.ACTION_BAR)
-            synchronized(instanceRequests) {
-                // Don't make duplicate instance requests
-                if (instanceRequests.any { it.gameType == gameType }) return@forEach
-                logger.info("Starting a new instance for player $player with game type: $gameType.")
-                // Create a new instance for the first player in the queue.
-                instanceRequests.add(InstanceRequest(this, gameType, player))
-            }
-        }
-        processInstanceRequests()
-    }
-
-    private var lastInstanceRequest: Long = 0L
-
-    private fun processInstanceRequests() {
-        // Hard throttle all instance requests combined to one per 2 seconds.
-        if (System.currentTimeMillis() - lastInstanceRequest < 2000) return
-
-        val request = synchronized(instanceRequests) {
-            instanceRequests.filter { !it.isWaitingForServer && !it.isWaitingForState }.minByOrNull { it.attempts }
-        }
-        if (request != null) {
-            lastInstanceRequest = System.currentTimeMillis()
+            logger.info("Starting a new instance for player $player with game type: GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode})")
+            // Create a new instance for the first player in the queue.
 
             val (gameServer, _) = app.get(InstanceManager::class).findGameServerWithLeastInstances() ?: return
-            logger.info("Creating instance on server '$gameServer' from request $request.")
 
-            Utils.sendChatAsync(request.requester, "<p2>Creating instance...", GsClient.SendChatRequest.ChatType.ACTION_BAR)
+            Utils.sendChatAsync(player, "<p2>Creating instance...", GsClient.SendChatRequest.ChatType.ACTION_BAR)
             runBlocking {
-                Utils.getStubToServer(gameServer)
-                    .createInstance(GsClient.CreateInstanceRequest.newBuilder().setGameType(request.gameType).build())
+                val startTime = System.currentTimeMillis()
+                val response = Utils.getStubToServer(gameServer)
+                    .createInstance(createInstanceRequest {
+                        this.correlationId = UUID.randomUUID().toString()
+                        this.gameType = gameType
+                    })
+                if (response.success) {
+                    val totalTime = System.currentTimeMillis() - startTime
+                    if (!send(player, UUID.fromString(response.instanceUuid))) {
+                        // Created instance successfully, but failed to send the player. It was likely full.
+                        Utils.sendChat(
+                            player,
+                            "<red><lang:puffin.queue.not_enough_space:'<gray>${response.instanceUuid}'>"
+                        )
+                    } else {
+                        // Success!
+                        Utils.sendChatAsync(player, "<p1>Done! (${totalTime}ms)", GsClient.SendChatRequest.ChatType.ACTION_BAR)
+                    }
+                } else {
+                    // Instance creation failed.
+                    Utils.sendChatAsync(
+                        player,
+                        "<red>Failed to create instance! Please try again in a few minutes.",
+                        GsClient.SendChatRequest.ChatType.ACTION_BAR
+                    )
+                }
+                queue.remove(player)
+                queueEntranceTimes.remove(player)
             }
-            request.isWaitingForServer = true
-            request.attempts++
-        }
-
-        // Give up to three attempts before disregarding the request.
-        instanceRequests.removeAll {
-            if (it.attempts > 3) {
-                logger.warn("Removed instance request $it because it failed after 3 attempts.")
-                queue.remove(it.requester)
-                queueEntranceTimes.remove(it.requester)
-                Utils.sendChatAsync(it.requester,
-                    "<red>Failed to create instance! Please try again in a few minutes.",
-                    GsClient.SendChatRequest.ChatType.ACTION_BAR)
-                true
-            } else false
         }
     }
 
@@ -234,8 +134,10 @@ class Queue(app: ServiceHolder) : Service(app) {
             // Remove players from the queue if they've been in it for a long time
             queueEntranceTimes.entries.removeAll { (uuid, time) ->
                 if (System.currentTimeMillis() - time > 30_000) {
-                    Utils.sendChatAsync(uuid,
-                        "<red><lang:queue.removed.reason:'<dark_gray><lang:queue.removed.reason.timeout>'>")
+                    Utils.sendChatAsync(
+                        uuid,
+                        "<red><lang:queue.removed.reason:'<dark_gray><lang:queue.removed.reason.timeout>'>"
+                    )
                     queue.remove(uuid)
                     return@removeAll true
                 }
@@ -256,19 +158,24 @@ class Queue(app: ServiceHolder) : Service(app) {
             val uuid = UUID.fromString(request.playerUuid)
             val gameSpecificMapFolder = File(File(config.worldsFolder), request.gameType.name)
 
-            if ((mapName != null && db.getMapInfo(mapName) == null) || // No entry for the map in the database
-                (mapName == null && (!gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()
-                    ?.isNotEmpty() == false)) // No world folder found
-            ) {
-                Utils.sendChat(uuid,
-                    "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>")
-            } else {
-                logger.info("${request.playerUuid} added to queue for ${request.gameType}")
-                queue[uuid] = request.gameType
-                queueEntranceTimes[uuid] = System.currentTimeMillis()
-                Utils.sendChat(uuid, "<p1><lang:queue.added.game:'${request.gameType.name}'>")
-                update()
+            if (request.gameType.hasMapName()) {
+                if (db.getMapInfo(mapName) == null || !gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()
+                        ?.isEmpty() == true
+                ) {
+                    Utils.sendChat(
+                        uuid,
+                        "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>"
+                    )
+
+                    return Empty.getDefaultInstance()
+                }
             }
+
+            logger.info("${request.playerUuid} added to queue for ${request.gameType}")
+            queue[uuid] = request.gameType
+            queueEntranceTimes[uuid] = System.currentTimeMillis()
+            Utils.sendChat(uuid, "<p1><lang:queue.added.game:'${request.gameType.name}'>")
+            update()
 
             return Empty.getDefaultInstance()
         }

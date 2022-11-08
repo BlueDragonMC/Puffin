@@ -35,7 +35,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.1")
 
-    implementation("com.github.bluedragonmc:rpc:605f302179")
+    implementation("com.github.bluedragonmc:rpc:840fc82b44")
 
     implementation("io.grpc:grpc-services:$grpcVersion")
     implementation("io.grpc:grpc-netty:$grpcVersion")
@@ -50,6 +50,10 @@ tasks.test {
 
 tasks.withType<KotlinCompile> {
     kotlinOptions.jvmTarget = "16"
+}
+
+tasks.shadowJar {
+    mergeServiceFiles()
 }
 
 application {
