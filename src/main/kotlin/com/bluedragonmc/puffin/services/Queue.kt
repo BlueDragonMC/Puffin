@@ -74,6 +74,11 @@ class Queue(app: ServiceHolder) : Service(app) {
                         this.gameType = gameType
                     })
                 if (response?.success == true) {
+                    // Update the amount of open slots manually because we have probably not received a game state update by this point
+                    app.get(GameStateManager::class).setEmptySlots(UUID.fromString(response.instanceUuid), response.gameState.openSlots)
+
+                    logger.debug("Instance created successfully! instance uuid: ${response.instanceUuid}, game state: ${response.gameState.gameState}, open slots: ${response.gameState.openSlots}, joinable: ${response.gameState.joinable}")
+
                     val totalTime = System.currentTimeMillis() - startTime
                     if (!send(player, UUID.fromString(response.instanceUuid))) {
                         // Created instance successfully, but failed to send the player. It was likely full.
@@ -83,7 +88,7 @@ class Queue(app: ServiceHolder) : Service(app) {
                         )
                     } else {
                         // Success!
-                        Utils.sendChatAsync(player, "<p1>Done! (${totalTime}ms)", GsClient.SendChatRequest.ChatType.ACTION_BAR)
+                        Utils.sendChatAsync(player, "<p1>Done! <dark_gray>(${totalTime}ms)", GsClient.SendChatRequest.ChatType.ACTION_BAR)
                     }
                 } else {
                     // Instance creation failed.
