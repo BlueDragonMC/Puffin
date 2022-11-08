@@ -64,6 +64,8 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
 
         override suspend fun playerTransfer(request: PlayerTrackerOuterClass.PlayerTransferRequest): Empty {
             // Called when a player changes backend servers (including initial routing).
+            playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.newInstance)
+            logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.newInstance}")
             return Empty.getDefaultInstance()
         }
 

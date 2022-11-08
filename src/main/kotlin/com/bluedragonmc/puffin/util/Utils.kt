@@ -12,12 +12,14 @@ import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.*
 import kotlin.concurrent.fixedRateTimer
 
 object Utils {
     lateinit var app: ServiceHolder
+    private val logger = LoggerFactory.getLogger(this::class.java)
 
     private val channels = Caffeine.newBuilder()
         .expireAfterAccess(Duration.ofMinutes(5))
@@ -25,23 +27,28 @@ object Utils {
         .build<String, ManagedChannel>()
 
     fun getChannelToPlayer(player: UUID): ManagedChannel {
+        logger.debug("Getting gRPC channel for player $player")
         val instance = app.get(PlayerTracker::class).getInstanceOfPlayer(player)!!
         val serverName = app.get(InstanceManager::class).getGameServerOf(instance)!!
+        logger.debug("Player $player is in instance '$instance' on server '$serverName'.")
         return getChannelToServer(serverName)
     }
 
     fun getChannelToServer(serverName: String): ManagedChannel {
-        val addr = app.get(InstanceManager::class).getGameServers().firstOrNull {
-            it.name == serverName
-        }?.address
+        logger.debug("Getting gRPC channel to game server with name: '$serverName'")
+        val addr = app.get(K8sServiceDiscovery::class).getGameServerIP(serverName)
         return channels.get(addr) { addr ->
+            logger.debug("Building managed channel with address '$addr' and port '50051'.")
             ManagedChannelBuilder.forAddress(addr, 50051).usePlaintext().build()
         }
     }
 
     fun getChannelToProxyOf(player: UUID): ManagedChannel? =
-        app.get(ProxyServiceDiscovery::class).getProxyIP(player)?.let {
-            ManagedChannelBuilder.forAddress(it, 50051).usePlaintext().build()
+        app.get(K8sServiceDiscovery::class).getProxyIP(player)?.let {
+            return channels.get(it) { addr ->
+                logger.debug("Building managed channel with address '$addr' and port '50051'.")
+                ManagedChannelBuilder.forAddress(addr, 50051).usePlaintext().build()
+            }
         }
 
     fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub {
@@ -57,6 +64,7 @@ object Utils {
     }
 
     suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) {
+        logger.debug("Sending chat message (type $chatType) to player $player: '$message'")
         val stub = getStubToPlayer(player)
         stub.sendChat(sendChatRequest {
             this.playerUuid = player.toString()
@@ -87,12 +95,27 @@ object Utils {
         }
 
     suspend fun sendPlayerToInstance(player: UUID, instanceId: UUID) {
-        val channel = getChannelToProxyOf(player) ?: return
-        val server = app.get(InstanceManager::class).getGameServerOf(instanceId)
+        val channel = getChannelToProxyOf(player) ?: run {
+            logger.warn("Proxy address not found for player $player!")
+            return
+        }
+        val im = app.get(InstanceManager::class)
+        val servers = im.getGameServers()
+        val serverName = im.getGameServerOf(instanceId)
+        val gameServerObj = servers.find { it.name == serverName } ?: run {
+            logger.warn("No IP/Port was found for server name $serverName! Sending players to this server may not be possible.")
+            return
+        }
+        if (gameServerObj.port == null) {
+            logger.warn("Game server with name $serverName was found, but it has no port! Sending players to this server may not be possible.")
+            return
+        }
         val stub = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
         stub.sendPlayer(sendPlayerRequest {
-            playerUuid = player.toString()
-            serverName = server!!
+            this.playerUuid = player.toString()
+            this.serverName = serverName!!
+            this.gameServerIp = gameServerObj.address
+            this.gameServerPort = gameServerObj.port!!
             this.instanceId = instanceId.toString()
         })
     }

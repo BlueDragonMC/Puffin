@@ -61,6 +61,7 @@ class Puffin : ServiceHolder {
         val gameStateManager = GameStateManager(app)
         val partyManager = PartyManager(app)
         val playerTracker = PlayerTracker(app)
+        val privateMessageService = PrivateMessageService(app)
 
         val grpcServer = ServerBuilder.forPort(port)
             .addService(instanceManager.ServerDiscoveryService())
@@ -70,6 +71,7 @@ class Puffin : ServiceHolder {
             .addService(gameStateManager.GameStateService())
             .addService(partyManager.PartyService())
             .addService(playerTracker.PlayerTrackerService())
+            .addService(privateMessageService.VelocityMessageService())
             .addService(ProtoReflectionService.newInstance())
             .build()
 
@@ -79,12 +81,13 @@ class Puffin : ServiceHolder {
         register(ConfigService(app))
         register(DatabaseConnection(app))
         register(Utils.UtilsService(app))
-        register(ProxyServiceDiscovery(app))
+        register(K8sServiceDiscovery(app))
         register(playerTracker)
         register(instanceManager)
         register(queue)
         register(gameStateManager)
         register(partyManager)
+        register(privateMessageService)
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         grpcServer.awaitTermination()
