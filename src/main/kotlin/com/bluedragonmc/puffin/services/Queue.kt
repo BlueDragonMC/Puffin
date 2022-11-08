@@ -8,9 +8,7 @@ import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
-import com.google.protobuf.Descriptors.FieldDescriptor
 import com.google.protobuf.Empty
-import com.google.protobuf.FieldDescriptorProtoKt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -28,18 +26,18 @@ class Queue(app: ServiceHolder) : Service(app) {
         queue.entries.removeAll { (player, gameType) ->
             val instances = app.get(InstanceManager::class).filterRunningInstances(gameType)
             if (instances.isNotEmpty()) {
-                logger.info("Found ${instances.size} instances of game type: $gameType")
+                logger.info("Found ${instances.size} instances of game type: GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode})")
 
                 val party = app.get(PartyManager::class).partyOf(player)
                 val playerSlotsRequired = party?.members?.size ?: 1
                 val (best, _) = instances.keys.associateWith {
                     gameStateManager.getEmptySlots(it)
                 }.filter { it.value > 0 }.entries.minByOrNull { it.value } ?: run {
-                    logger.info("All instances of type $gameType have less than $playerSlotsRequired player slots.")
+                    logger.info("All instances of type GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}) have less than $playerSlotsRequired player slots.")
                     return@removeAll false
                 }
 
-                logger.info("Instance with least empty slots for $gameType: $best")
+                logger.info("Instance with least empty slots for GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}): $best")
                 if (party != null && party.leader != player) {
                     // Player is queued as a party member, not a leader
                     queueEntranceTimes.remove(player)
@@ -58,9 +56,12 @@ class Queue(app: ServiceHolder) : Service(app) {
             } else logger.info("No instances found of type GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}).")
             return@removeAll false
         }
-        queue.entries.forEach { (player, gameType) ->
+        queue.entries.firstOrNull()?.let { (player, gameType) ->
             logger.info("Starting a new instance for player $player with game type: GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode})")
             // Create a new instance for the first player in the queue.
+            // Remove them from the queue immediately to prevent them from being sent to an existing game before being sent to the new instance.
+            queue.remove(player)
+            queueEntranceTimes.remove(player)
 
             val (gameServer, _) = app.get(InstanceManager::class).findGameServerWithLeastInstances() ?: return
 
@@ -68,11 +69,11 @@ class Queue(app: ServiceHolder) : Service(app) {
             runBlocking {
                 val startTime = System.currentTimeMillis()
                 val response = Utils.getStubToServer(gameServer)
-                    .createInstance(createInstanceRequest {
+                    ?.createInstance(createInstanceRequest {
                         this.correlationId = UUID.randomUUID().toString()
                         this.gameType = gameType
                     })
-                if (response.success) {
+                if (response?.success == true) {
                     val totalTime = System.currentTimeMillis() - startTime
                     if (!send(player, UUID.fromString(response.instanceUuid))) {
                         // Created instance successfully, but failed to send the player. It was likely full.
@@ -92,6 +93,7 @@ class Queue(app: ServiceHolder) : Service(app) {
                         GsClient.SendChatRequest.ChatType.ACTION_BAR
                     )
                 }
+                // Make sure the player is removed from the queue
                 queue.remove(player)
                 queueEntranceTimes.remove(player)
             }
@@ -171,7 +173,7 @@ class Queue(app: ServiceHolder) : Service(app) {
                 }
             }
 
-            logger.info("${request.playerUuid} added to queue for ${request.gameType}")
+            logger.info("${request.playerUuid} added to queue for GameType(name=${request.gameType.name}, mapName=${request.gameType.mapName}, mode=${request.gameType.mode})")
             queue[uuid] = request.gameType
             queueEntranceTimes[uuid] = System.currentTimeMillis()
             Utils.sendChat(uuid, "<p1><lang:queue.added.game:'${request.gameType.name}'>")
