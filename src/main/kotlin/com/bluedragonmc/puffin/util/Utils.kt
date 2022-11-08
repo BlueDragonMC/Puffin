@@ -26,17 +26,20 @@ object Utils {
         .expireAfterWrite(Duration.ofMinutes(10))
         .build<String, ManagedChannel>()
 
-    fun getChannelToPlayer(player: UUID): ManagedChannel {
-        logger.debug("Getting gRPC channel for player $player")
-        val instance = app.get(PlayerTracker::class).getInstanceOfPlayer(player)!!
-        val serverName = app.get(InstanceManager::class).getGameServerOf(instance)!!
-        logger.debug("Player $player is in instance '$instance' on server '$serverName'.")
+    fun getChannelToPlayer(player: UUID): ManagedChannel? {
+        val serverName = app.get(PlayerTracker::class).getServerOfPlayer(player) ?: run {
+            logger.warn("Failed to get server name of player $player (Can't get gRPC channel to the player's server)")
+            return null
+        }
         return getChannelToServer(serverName)
     }
 
-    fun getChannelToServer(serverName: String): ManagedChannel {
+    fun getChannelToServer(serverName: String): ManagedChannel? {
         logger.debug("Getting gRPC channel to game server with name: '$serverName'")
-        val addr = app.get(K8sServiceDiscovery::class).getGameServerIP(serverName)
+        val addr = app.get(K8sServiceDiscovery::class).getGameServerIP(serverName) ?: run {
+            logger.warn("Failed to get server address for game server '$serverName' (Can't get gRPC channel to the server)")
+            return null
+        }
         return channels.get(addr) { addr ->
             logger.debug("Building managed channel with address '$addr' and port '50051'.")
             ManagedChannelBuilder.forAddress(addr, 50051).usePlaintext().build()
@@ -51,26 +54,28 @@ object Utils {
             }
         }
 
-    fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub {
+    fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub? {
         return GsClientServiceGrpcKt.GsClientServiceCoroutineStub(
-            getChannelToServer(serverName)
+            getChannelToServer(serverName) ?: return null
         )
     }
 
-    fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub {
+    fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub? {
         return GsClientServiceGrpcKt.GsClientServiceCoroutineStub(
-            getChannelToPlayer(player)
+            getChannelToPlayer(player) ?: return null
         )
     }
 
     suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) {
         logger.debug("Sending chat message (type $chatType) to player $player: '$message'")
         val stub = getStubToPlayer(player)
-        stub.sendChat(sendChatRequest {
+        stub?.sendChat(sendChatRequest {
             this.playerUuid = player.toString()
             this.message = message
             this.chatType = chatType
-        })
+        }) ?: run {
+            logger.warn("Failed to send chat message '$message' to player '$player'.")
+        }
     }
 
     fun sendChatBlocking(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) = runBlocking {
@@ -95,13 +100,21 @@ object Utils {
         }
 
     suspend fun sendPlayerToInstance(player: UUID, instanceId: UUID) {
-        val channel = getChannelToProxyOf(player) ?: run {
-            logger.warn("Proxy address not found for player $player!")
-            return
-        }
+        val currentGameServer = app.get(PlayerTracker::class).getServerOfPlayer(player)
+
         val im = app.get(InstanceManager::class)
         val servers = im.getGameServers()
         val serverName = im.getGameServerOf(instanceId)
+
+        val channel = if (currentGameServer != serverName) {
+            getChannelToProxyOf(player) // Send to the proxy if we're routing the player between game servers
+        } else {
+            getChannelToPlayer(player) // Send directly to the game server if we're routing the player between instances on the same server
+        }?: run {
+            logger.warn("Failed to initialize the correct channel to send player $player from $currentGameServer to $serverName/$instanceId!")
+            return
+        }
+
         val gameServerObj = servers.find { it.name == serverName } ?: run {
             logger.warn("No IP/Port was found for server name $serverName! Sending players to this server may not be possible.")
             return

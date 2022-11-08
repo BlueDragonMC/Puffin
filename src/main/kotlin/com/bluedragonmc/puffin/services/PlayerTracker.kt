@@ -16,6 +16,11 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     private val playerInstances = mutableMapOf<UUID, UUID>()
 
     /**
+     * A map of player UUIDs to server names.
+     */
+    private val playerServers = mutableMapOf<UUID, String>()
+
+    /**
      * A map of player UUIDs to the k8s pod name of the proxy they're on.
      */
     private val playerProxies = mutableMapOf<UUID, String>()
@@ -25,6 +30,8 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     fun getPlayersInInstance(instanceId: UUID) = playerInstances.filter { it.value == instanceId }.map { it.key }
     fun getProxyOfPlayer(player: UUID) = playerProxies[player]
     fun getInstanceOfPlayer(uuid: UUID) = playerInstances[uuid]
+    fun getServerOfPlayer(player: UUID) = playerServers[player] ?:
+        playerInstances[player]?.let { app.get(InstanceManager::class).getGameServerOf(it) }
 
     override fun close() {
         playerInstances.clear()
@@ -33,6 +40,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     fun onLogout(action: Consumer<UUID>) {
         logoutActions.add(action)
     }
+
 
     inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
         override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty {
@@ -53,19 +61,25 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             if (playerProxies.remove(UUID.fromString(request.uuid)) == null)
                 logger.warn("Player logged out without a recorded proxy server: uuid=${request.uuid}")
 
+            if (playerServers.remove(UUID.fromString(request.uuid)) == null)
+                logger.warn("Player logged out without a recorded proxy server: uuid=${request.uuid}")
+
             return Empty.getDefaultInstance()
         }
 
         override suspend fun playerInstanceChange(request: PlayerTrackerOuterClass.PlayerInstanceChangeRequest): Empty {
             // Called when a player changes instances on the same backend server.
             playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.instanceId)
+            playerServers[UUID.fromString(request.uuid)] = request.serverName
+            logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
             return Empty.getDefaultInstance()
         }
 
         override suspend fun playerTransfer(request: PlayerTrackerOuterClass.PlayerTransferRequest): Empty {
             // Called when a player changes backend servers (including initial routing).
             playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.newInstance)
-            logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.newInstance}")
+            playerServers[UUID.fromString(request.uuid)] = request.newServerName
+            logger.info("Player Transfer > Player ${request.uuid} switched to instance ${request.newServerName}/${request.newInstance}")
             return Empty.getDefaultInstance()
         }
 
