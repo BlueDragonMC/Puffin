@@ -69,6 +69,7 @@ class InstanceManager(app: Puffin) : Service(app) {
         val gs = GameServer(`object`)
         logger.info("New GameServer found: ${gs.name} (${gs.address}:${gs.port})")
         gameServers.putIfAbsent(gs.name, mutableSetOf())
+        pingCache.put(gs.name, Unit)
     }
 
     /**

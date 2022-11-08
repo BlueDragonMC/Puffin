@@ -12,6 +12,9 @@ class GameStateManager(app: Puffin) : Service(app) {
 
     fun hasState(instanceId: UUID) = emptyPlayerSlots.contains(instanceId)
     fun getEmptySlots(instanceId: UUID) = emptyPlayerSlots[instanceId] ?: 0
+    fun setEmptySlots(instanceId: UUID, slots: Int) {
+        emptyPlayerSlots[instanceId] = slots
+    }
 
     inner class GameStateService : GameStateServiceGrpcKt.GameStateServiceCoroutineImplBase() {
         override suspend fun updateGameState(request: ServerTracking.GameStateUpdateRequest): Empty {
