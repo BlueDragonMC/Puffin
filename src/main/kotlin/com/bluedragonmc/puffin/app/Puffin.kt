@@ -65,7 +65,6 @@ class Puffin : ServiceHolder {
 
         val grpcServer = ServerBuilder.forPort(port)
             .addService(instanceManager.ServerDiscoveryService())
-            .addService(instanceManager.ServerTrackerService())
             .addService(instanceManager.InstanceService())
             .addService(queue.QueueService())
             .addService(gameStateManager.GameStateService())
@@ -81,8 +80,8 @@ class Puffin : ServiceHolder {
         register(ConfigService(app))
         register(DatabaseConnection(app))
         register(Utils.UtilsService(app))
-        register(K8sServiceDiscovery(app))
         register(playerTracker)
+        register(K8sServiceDiscovery(app))
         register(instanceManager)
         register(queue)
         register(gameStateManager)

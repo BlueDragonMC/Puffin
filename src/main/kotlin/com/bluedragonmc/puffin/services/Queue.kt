@@ -1,108 +1,155 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.api.grpc.CommonTypes
+import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.api.grpc.QueueServiceGrpcKt
 import com.bluedragonmc.api.grpc.createInstanceRequest
-import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
-import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.google.protobuf.Empty
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.*
+import java.util.concurrent.locks.ReentrantLock
 
 class Queue(app: ServiceHolder) : Service(app) {
 
-    private val queue = mutableMapOf<UUID, CommonTypes.GameType>()
+    private val queue = mutableMapOf<UUID, GameType>()
     private val queueEntranceTimes = mutableMapOf<UUID, Long>()
 
-    fun update() {
+    fun onInstanceCreated(instanceId: UUID, gameType: GameType, players: List<UUID> = emptyList()) {
+        // The amount of players that have already been sent to the instance.
+        // Used to prevent overfilling.
+        var sentPlayers = 0
+        val openSlots = app.get(GameStateManager::class).getEmptySlots(instanceId)
 
-        val gameStateManager = app.get(GameStateManager::class)
-
-        queue.entries.removeAll { (player, gameType) ->
-            val instances = app.get(InstanceManager::class).filterRunningInstances(gameType)
-            if (instances.isNotEmpty()) {
-                logger.info("Found ${instances.size} instances of game type: GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode})")
-
-                val party = app.get(PartyManager::class).partyOf(player)
-                val playerSlotsRequired = party?.members?.size ?: 1
-                val (best, _) = instances.keys.associateWith {
-                    gameStateManager.getEmptySlots(it)
-                }.filter { it.value > 0 }.entries.minByOrNull { it.value } ?: run {
-                    logger.info("All instances of type GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}) have less than $playerSlotsRequired player slots.")
-                    return@removeAll false
-                }
-
-                logger.info("Instance with least empty slots for GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}): $best")
-                if (party != null && party.leader != player) {
-                    // Player is queued as a party member, not a leader
-                    queueEntranceTimes.remove(player)
-                    return@removeAll true
-                }
-                if (gameStateManager.getEmptySlots(best) >= playerSlotsRequired) {
-                    // There is enough space in the instance for this player and their party (if they're in one)
-                    // Send the player to this instance and remove them from the queue
-                    logger.info("Sending player $player to existing instance of type GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}): $best")
-                    queueEntranceTimes.remove(player)
-                    Puffin.IO.launch {
-                        send(player, best)
-                    }
-                    return@removeAll true
-                }
-            } else logger.info("No instances found of type GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode}).")
-            return@removeAll false
+        players.forEach { player ->
+            val party = app.get(PartyManager::class).partyOf(player)
+            val partySize = party?.members?.size ?: 1
+            if (sentPlayers + partySize <= openSlots) {
+                sentPlayers++
+                runBlocking { send(player, instanceId) }
+            }
         }
-        queue.entries.firstOrNull()?.let { (player, gameType) ->
-            logger.info("Starting a new instance for player $player with game type: GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode})")
-            // Create a new instance for the first player in the queue.
-            // Remove them from the queue immediately to prevent them from being sent to an existing game before being sent to the new instance.
+
+        // A list of players which have exited the queue.
+        val toRemove = mutableListOf<UUID>()
+
+        // Look through the queue and see if any players could join this newly-created instance immediately.
+        for ((player, wants) in queue) {
+            val party = app.get(PartyManager::class).partyOf(player)
+            val partySize = party?.members?.size ?: 1
+            if (matchGameType(wants, gameType) && sentPlayers + partySize < openSlots) {
+                // This newly-created instance matches the game type that the player wants.
+                runBlocking {
+                    sentPlayers++
+                    if (send(player, instanceId)) {
+                        Utils.sendChatAsync(player, "<green>Done!", GsClient.SendChatRequest.ChatType.ACTION_BAR)
+                    } else {
+                        Utils.sendChat(player, "<red><lang:puffin.queue.not_enough_space:'<gray>$instanceId'>")
+                    }
+                    toRemove.add(player)
+                }
+            }
+        }
+
+        queue.keys.removeAll(toRemove.toSet())
+    }
+
+    @Volatile
+    private var startingInstanceType: GameType? = null
+
+    private val startingInstanceSubscribers = mutableListOf<UUID>()
+
+    private val instanceCreationLock = ReentrantLock()
+
+    /**
+     * Called when a player is added to the queue. If an instance matching their
+     * desired game type is available, they will be sent to it immediately.
+     * If not, an instance will be created matching the game type, and they will
+     * be sent to it along with other players that joined the queue after them.
+     */
+    private fun onPlayerAddedToQueue(player: UUID, gameType: GameType) {
+        val partySize = app.get(PartyManager::class).partyOf(player)?.members?.size ?: 1
+        val instances = app.get(InstanceManager::class).filterRunningInstances(gameType)
+        for (instance in instances.keys) {
+            val emptySlots = app.get(GameStateManager::class).getEmptySlots(instance)
+            if (emptySlots >= partySize) {
+                runBlocking {
+                    send(player, instance)
+                }
+                return
+            }
+        }
+
+        // If the player couldn't immediately be sent to a new instance,
+        // check if a matching instance is currently being created.
+
+        if (startingInstanceType != null && matchGameType(gameType, startingInstanceType!!)) {
+            Utils.sendChatAsync(player, "<p2>Waiting for instance...", GsClient.SendChatRequest.ChatType.ACTION_BAR)
+            startingInstanceSubscribers.add(player) // The list of subscribers will be sent to the instance when it is fully created.
             queue.remove(player)
             queueEntranceTimes.remove(player)
+            return
+        }
 
+        // If the instance that's currently being created doesn't match, try
+        // to create a new one using the requested game type.
+        try {
+            instanceCreationLock.lock()
+            startingInstanceSubscribers.clear()
+            startingInstanceType = gameType
             val (gameServer, _) = app.get(InstanceManager::class).findGameServerWithLeastInstances() ?: return
 
             Utils.sendChatAsync(player, "<p2>Creating instance...", GsClient.SendChatRequest.ChatType.ACTION_BAR)
-            runBlocking {
-                val startTime = System.currentTimeMillis()
-                val response = Utils.getStubToServer(gameServer)
-                    ?.createInstance(createInstanceRequest {
-                        this.correlationId = UUID.randomUUID().toString()
-                        this.gameType = gameType
-                    })
-                if (response?.success == true) {
-                    // Update the amount of open slots manually because we have probably not received a game state update by this point
-                    app.get(GameStateManager::class).setEmptySlots(UUID.fromString(response.instanceUuid), response.gameState.openSlots)
-
-                    logger.debug("Instance created successfully! instance uuid: ${response.instanceUuid}, game state: ${response.gameState.gameState}, open slots: ${response.gameState.openSlots}, joinable: ${response.gameState.joinable}")
-
-                    val totalTime = System.currentTimeMillis() - startTime
-                    if (!send(player, UUID.fromString(response.instanceUuid))) {
-                        // Created instance successfully, but failed to send the player. It was likely full.
-                        Utils.sendChat(
-                            player,
-                            "<red><lang:puffin.queue.not_enough_space:'<gray>${response.instanceUuid}'>"
-                        )
-                    } else {
-                        // Success!
-                        Utils.sendChatAsync(player, "<p1>Done! <dark_gray>(${totalTime}ms)", GsClient.SendChatRequest.ChatType.ACTION_BAR)
-                    }
-                } else {
-                    // Instance creation failed.
-                    Utils.sendChatAsync(
-                        player,
-                        "<red>Failed to create instance! Please try again in a few minutes.",
-                        GsClient.SendChatRequest.ChatType.ACTION_BAR
-                    )
-                }
-                // Make sure the player is removed from the queue
-                queue.remove(player)
-                queueEntranceTimes.remove(player)
+            val response = runBlocking {
+                Utils.getStubToServer(gameServer)?.createInstance(createInstanceRequest {
+                    this.correlationId = UUID.randomUUID().toString()
+                    this.gameType = gameType
+                })
             }
+            if (response?.success == true) {
+                // The instance was created successfully. Update the game state and send all matching players to it.
+                val uuid = UUID.fromString(response.instanceUuid)
+                app.get(GameStateManager::class).setGameState(uuid, response.gameState)
+                onInstanceCreated(uuid, gameType, startingInstanceSubscribers)
+            } else {
+                Utils.sendChatAsync(
+                    player,
+                    "<red>Failed to create instance! Please try again in a few minutes.",
+                    GsClient.SendChatRequest.ChatType.ACTION_BAR
+                )
+            }
+            startingInstanceSubscribers.clear()
+            startingInstanceType = null
+
+            // Make sure the player is removed from the queue
+            queue.remove(player)
+            queueEntranceTimes.remove(player)
+        } finally {
+            instanceCreationLock.unlock()
         }
+    }
+
+    /**
+     * Matches the [first] game type against the [other] game type,
+     * returning true if they match. The flags of the [first]
+     * game type are considered when matching against the [other] game type.
+     */
+    fun matchGameType(first: GameType, other: GameType): Boolean {
+        return (!first.selectorsList.contains(GameType.GameTypeFieldSelector.GAME_NAME) || first.name == other.name) &&
+                (!first.selectorsList.contains(GameType.GameTypeFieldSelector.MAP_NAME) || first.mapName == other.mapName) &&
+                (!first.selectorsList.contains(GameType.GameTypeFieldSelector.GAME_MODE) || first.mode == other.mode)
+    }
+
+    /**
+     * Add a player to the Queue for the specified [gameType].
+     */
+    fun queuePlayer(player: UUID, gameType: GameType) {
+        logger.info("$player added to queue for GameType(name=${gameType.name}, mapName=${gameType.mapName}, mode=${gameType.mode})")
+        queue[player] = gameType
+        queueEntranceTimes[player] = System.currentTimeMillis()
+        onPlayerAddedToQueue(player, gameType)
     }
 
     private suspend fun send(player: UUID, instanceId: UUID): Boolean {
@@ -132,57 +179,29 @@ class Queue(app: ServiceHolder) : Service(app) {
         return true
     }
 
-    override fun initialize() {
-
-        catchingTimer("queue-update", daemon = true, initialDelay = 10_000, period = 5_000) {
-            // Manually update the queue every 5 seconds in case of a messaging failure or unexpected delay
-            update()
-
-            // Remove players from the queue if they've been in it for a long time
-            queueEntranceTimes.entries.removeAll { (uuid, time) ->
-                if (System.currentTimeMillis() - time > 30_000) {
-                    Utils.sendChatAsync(
-                        uuid,
-                        "<red><lang:queue.removed.reason:'<dark_gray><lang:queue.removed.reason.timeout>'>"
-                    )
-                    queue.remove(uuid)
-                    return@removeAll true
-                }
-                return@removeAll false
-            }
-        }
-    }
-
-    override fun close() {}
-
     inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
+
+        private fun isValidMap(game: String, mapName: String): Boolean {
+            val folder = File(File(app.get(ConfigService::class).config.worldsFolder), game)
+
+            return folder.exists() && folder.list()?.isNotEmpty() == true && app.get(DatabaseConnection::class)
+                .getMapInfo(mapName) != null
+        }
+
         override suspend fun addToQueue(request: com.bluedragonmc.api.grpc.Queue.AddToQueueRequest): Empty {
 
-            val db = app.get(DatabaseConnection::class)
-            val config = app.get(ConfigService::class).config
-
-            val mapName = request.gameType.mapName
             val uuid = UUID.fromString(request.playerUuid)
-            val gameSpecificMapFolder = File(File(config.worldsFolder), request.gameType.name)
 
-            if (request.gameType.hasMapName()) {
-                if (db.getMapInfo(mapName) == null || !gameSpecificMapFolder.exists() || gameSpecificMapFolder.list()
-                        ?.isEmpty() == true
-                ) {
-                    Utils.sendChat(
-                        uuid,
-                        "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>"
-                    )
-
-                    return Empty.getDefaultInstance()
-                }
+            if (request.gameType.hasMapName() && !isValidMap(request.gameType.name, request.gameType.mapName)) {
+                Utils.sendChat(
+                    uuid,
+                    "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>"
+                )
+                return Empty.getDefaultInstance()
             }
 
-            logger.info("${request.playerUuid} added to queue for GameType(name=${request.gameType.name}, mapName=${request.gameType.mapName}, mode=${request.gameType.mode})")
-            queue[uuid] = request.gameType
-            queueEntranceTimes[uuid] = System.currentTimeMillis()
+            queuePlayer(uuid, request.gameType)
             Utils.sendChat(uuid, "<p1><lang:queue.added.game:'${request.gameType.name}'>")
-            update()
 
             return Empty.getDefaultInstance()
         }
