@@ -198,6 +198,12 @@ class InstanceManager(app: Puffin) : Service(app) {
             handleInstanceRemoved(request)
             return Empty.getDefaultInstance()
         }
+
+        override suspend fun getTotalPlayerCount(request: ServerTracking.PlayerCountRequest): ServerTracking.PlayerCountResponse {
+            return playerCountResponse {
+                totalPlayers = app.get(PlayerTracker::class).getPlayerCount(request.filterGameTypeOrNull)
+            }
+        }
     }
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
