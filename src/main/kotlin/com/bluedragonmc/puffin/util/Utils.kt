@@ -66,6 +66,15 @@ object Utils {
         )
     }
 
+    fun cleanupChannelsForServer(serverName: String) {
+        val addr = app.get(K8sServiceDiscovery::class).getGameServerIP(serverName)
+        addr?.let {
+            val channel = channels.getIfPresent(it)
+            channel?.shutdown()
+            channels.invalidate(it)
+        }
+    }
+
     suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) {
         logger.debug("Sending chat message (type $chatType) to player $player: '$message'")
         val stub = getStubToPlayer(player)

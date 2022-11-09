@@ -2,15 +2,16 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
-import com.bluedragonmc.api.grpc.CommonTypes.GameType.*
+import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
-import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
+import io.grpc.StatusException
 import io.kubernetes.client.util.Config
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
-import java.time.Duration
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.*
 
 class InstanceManager(app: Puffin) : Service(app) {
@@ -30,8 +31,6 @@ class InstanceManager(app: Puffin) : Service(app) {
      */
     private val instanceTypes = mutableMapOf<UUID, GameType>()
 
-    private val pingCache = Caffeine.newBuilder().expireAfterWrite(Duration.ofMinutes(5)).build<String, Unit>()
-
     init {
         Utils.catchingTimer("Agones SD", daemon = true, initialDelay = 5_000, period = 5_000) {
             val response = client.list()
@@ -47,14 +46,6 @@ class InstanceManager(app: Puffin) : Service(app) {
                 kubernetesObjects = objects
             }
         }
-        Utils.catchingTimer("Game Server Ping Check", daemon = true, initialDelay = 30_000, period = 10_000) {
-            ArrayList(gameServers.keys).forEach { serverName ->
-                if (pingCache.getIfPresent(serverName) == null) {
-                    logger.warn("Game Server $serverName stopped pinging for ~5 minutes and was removed from the list of GameServers.")
-                    gameServers.remove(serverName)
-                }
-            }
-        }
     }
 
     private fun processServerRemoved(`object`: DynamicKubernetesObject) {
@@ -63,13 +54,47 @@ class InstanceManager(app: Puffin) : Service(app) {
         val instances = gameServers[gs.name] ?: emptySet()
         gameServers.remove(gs.name)
         instanceTypes.entries.removeAll { it.key in instances }
+        Utils.cleanupChannelsForServer(gs.name)
     }
 
     private fun processServerAdded(`object`: DynamicKubernetesObject) {
         val gs = GameServer(`object`)
         logger.info("New GameServer found: ${gs.name} (${gs.address}:${gs.port})")
         gameServers.putIfAbsent(gs.name, mutableSetOf())
-        pingCache.put(gs.name, Unit)
+
+        // Get all running instances on this newly-added server
+        Puffin.IO.launch {
+            sync(gs.name)
+        }
+    }
+
+    private suspend fun sync(serverName: String) {
+        // Wait for the server's gRPC port to become available
+        try {
+            val channel = Utils.getChannelToServer(serverName) ?: return
+            val playersResponse =
+                PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel).getPlayers(Empty.getDefaultInstance())
+            val instancesResponse =
+                GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
+
+            app.get(PlayerTracker::class).updatePlayers(playersResponse)
+            logger.info("Found ${playersResponse.playersCount} players on server $serverName")
+            instancesResponse.instancesList.forEach { instance ->
+                val uuid = UUID.fromString(instance.instanceUuid)
+                instanceTypes[uuid] = instance.gameType
+                gameServers[serverName]!!.add(uuid)
+                handleInstanceCreated(instanceCreatedRequest {
+                    this.serverName = serverName
+                    this.instanceUuid = instance.instanceUuid
+                    this.gameType = instance.gameType
+                })
+            }
+            logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
+        } catch (e: StatusException) {
+            logger.info("Failed to sync players and instances with server $serverName, retrying...")
+            delay(5000)
+            sync(serverName)
+        }
     }
 
     /**
@@ -154,53 +179,14 @@ class InstanceManager(app: Puffin) : Service(app) {
         }
     }
 
-    inner class ServerTrackerService : ServerTrackerServiceGrpcKt.ServerTrackerServiceCoroutineImplBase() {
+    inner class InstanceService : InstanceServiceGrpcKt.InstanceServiceCoroutineImplBase() {
         override suspend fun initGameServer(request: ServerTracking.InitGameServerRequest): Empty {
             // Called when a new game server starts up and sends a ping
             logger.info("New game server started and pinged: ${request.serverName}")
             gameServers[request.serverName] = mutableSetOf()
-            pingCache.put(request.serverName, Unit)
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun serverSync(request: ServerTracking.ServerSyncRequest): Empty {
-            // Called by game servers every ~30 seconds to keep in sync
-            val instances = request.instancesList
-            val current = gameServers[request.serverName] ?: return Empty.getDefaultInstance()
-            val added = instances.filter { !current.contains(UUID.fromString(it.instanceUuid)) }
-            val removed = current.filter { !instances.any { i -> UUID.fromString(i.instanceUuid) == it } }
-
-            instances.forEach {
-                instanceTypes[UUID.fromString(it.instanceUuid)] = it.gameType
-            }
-
-            added.forEach {
-                logger.info("Instance added via ServerSyncMessage: $it")
-                handleInstanceCreated(
-                    ServerTracking.InstanceCreatedRequest.newBuilder().apply {
-                        instanceUuid = it.instanceUuid
-                        gameType = it.gameType
-                        serverName = request.serverName
-                    }.build()
-                )
-            }
-            removed.forEach {
-                logger.info("Instance removed via ServerSyncMessage: $it")
-                handleInstanceRemoved(
-                    ServerTracking.InstanceRemovedRequest.newBuilder().apply {
-                        serverName = request.serverName
-                        instanceUuid = it.toString()
-                    }.build()
-                )
-            }
-
-            pingCache.put(request.serverName, Unit)
-
-            return Empty.getDefaultInstance()
-        }
-    }
-
-    inner class InstanceService : InstanceServiceGrpcKt.InstanceServiceCoroutineImplBase() {
         override suspend fun createInstance(request: ServerTracking.InstanceCreatedRequest): Empty {
             // Called when an instance is created on a game server
             handleInstanceCreated(request)

@@ -1,5 +1,6 @@
 package com.bluedragonmc.puffin.services
 
+import com.bluedragonmc.api.grpc.PlayerHolderOuterClass
 import com.bluedragonmc.api.grpc.PlayerTrackerGrpcKt
 import com.bluedragonmc.api.grpc.PlayerTrackerOuterClass
 import com.bluedragonmc.api.grpc.queryPlayerResponse
@@ -41,6 +42,20 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
         logoutActions.add(action)
     }
 
+    fun updatePlayers(response: PlayerHolderOuterClass.GetPlayersResponse) {
+        response.playersList.forEach { player ->
+            val uuid = UUID.fromString(player.uuid)
+            playerServers[uuid] = player.serverName
+        }
+    }
+
+    fun updatePlayers(proxyPodName: String, response: PlayerHolderOuterClass.GetPlayersResponse) {
+        response.playersList.forEach { player ->
+            val uuid = UUID.fromString(player.uuid)
+            playerServers[uuid] = player.serverName
+            playerProxies[uuid] = proxyPodName
+        }
+    }
 
     inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
         override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty {
