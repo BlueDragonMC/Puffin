@@ -1,9 +1,6 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.api.grpc.PlayerHolderOuterClass
-import com.bluedragonmc.api.grpc.PlayerTrackerGrpcKt
-import com.bluedragonmc.api.grpc.PlayerTrackerOuterClass
-import com.bluedragonmc.api.grpc.queryPlayerResponse
+import com.bluedragonmc.api.grpc.*
 import com.google.protobuf.Empty
 import kotlinx.coroutines.runBlocking
 import java.util.*
@@ -31,8 +28,8 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     fun getPlayersInInstance(instanceId: UUID) = playerInstances.filter { it.value == instanceId }.map { it.key }
     fun getProxyOfPlayer(player: UUID) = playerProxies[player]
     fun getInstanceOfPlayer(uuid: UUID) = playerInstances[uuid]
-    fun getServerOfPlayer(player: UUID) = playerServers[player] ?:
-        playerInstances[player]?.let { app.get(InstanceManager::class).getGameServerOf(it) }
+    fun getServerOfPlayer(player: UUID) =
+        playerServers[player] ?: playerInstances[player]?.let { app.get(InstanceManager::class).getGameServerOf(it) }
 
     override fun close() {
         playerInstances.clear()
@@ -54,6 +51,19 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             val uuid = UUID.fromString(player.uuid)
             playerServers[uuid] = player.serverName
             playerProxies[uuid] = proxyPodName
+        }
+    }
+
+    fun getPlayerCount(gameType: CommonTypes.GameType?): Int {
+        return if (gameType == null) {
+            playerInstances.size
+        } else {
+            // Get a list of matching instances
+            val instances = app.get(InstanceManager::class).filterRunningInstances(gameType).keys
+            // Count the amount of players in any of these instances
+            playerInstances.keys.count { playerUuid ->
+                instances.contains(playerInstances[playerUuid])
+            }
         }
     }
 
@@ -99,7 +109,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
         }
 
         override suspend fun queryPlayer(request: PlayerTrackerOuterClass.PlayerQueryRequest): PlayerTrackerOuterClass.QueryPlayerResponse {
-            when(request.identityCase) {
+            when (request.identityCase) {
                 PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.USERNAME -> {
                     return queryPlayerResponse {
                         username = request.username
@@ -110,6 +120,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
                         }
                     }
                 }
+
                 PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.UUID -> {
                     val uuidIn = UUID.fromString(request.uuid)
                     return queryPlayerResponse {
@@ -121,6 +132,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
                         }
                     }
                 }
+
                 PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.IDENTITY_NOT_SET -> error("No identity given!")
                 null -> error("No identity given!")
             }
