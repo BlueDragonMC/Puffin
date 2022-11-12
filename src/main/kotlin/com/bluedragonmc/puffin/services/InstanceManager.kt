@@ -26,24 +26,64 @@ class InstanceManager(app: Puffin) : Service(app) {
      */
     private val gameServers = mutableMapOf<String, MutableSet<UUID>>()
 
+    private val readyGameServers = mutableListOf<String>()
+
     /**
      * A map of instance IDs to their running game types
      */
     private val instanceTypes = mutableMapOf<UUID, GameType>()
 
-    init {
-        Utils.catchingTimer("Agones SD", daemon = true, initialDelay = 5_000, period = 5_000) {
-            val response = client.list()
-            if (response.httpStatusCode >= 400) {
-                error("Kubernetes returned HTTP error code: ${response.httpStatusCode}: ${response.status?.status}, ${response.status?.message}")
+    override fun initialize() {
+        Puffin.IO.launch {
+            kubernetesObjects.addAll(client.list().`object`.items)
+            logger.info("Found ${kubernetesObjects.size} game servers")
+            kubernetesObjects.forEach { obj ->
+                // Add only the game servers that are ready. If they aren't ready, they likely
+                // won't have an IP that gRPC can talk to.
+                val state = obj.raw.get("status")?.asJsonObject?.get("state")?.asString
+                if (state == "Ready") {
+                    processServerAdded(obj)
+                }
             }
-            synchronized(lock) {
-                val objects = response.`object`.items
-                val removed = kubernetesObjects.filter { !objects.any { o -> o.metadata.uid == it.metadata.uid } }
-                val added = objects.filter { !kubernetesObjects.any { o -> o.metadata.uid == it.metadata.uid } }
-                removed.forEach(::processServerRemoved)
-                added.forEach(::processServerAdded)
-                kubernetesObjects = objects
+
+            while(true) {
+                watch()
+                logger.error("There was a problem watching Agones resources. Retrying...")
+                delay(5_000)
+            }
+        }
+    }
+
+    private fun watch() {
+        val watch = client.watch()
+        watch.forEach { event ->
+            val obj = event.`object`
+            val newState = obj.raw.get("status")?.asJsonObject?.get("state")?.asString
+            when (event.type) {
+                "ADDED" -> {
+                    // A new game server was added
+                    kubernetesObjects.add(obj)
+                }
+                "MODIFIED" -> {
+                    // An existing game server had its metadata or other information change
+                    val index = kubernetesObjects.indexOfFirst { it.metadata.uid == obj.metadata.uid }
+                    kubernetesObjects[index] = obj
+                    logger.debug("Game server '${obj.metadata.name}' is now in state: $newState")
+                    if (newState == "Ready" && !readyGameServers.contains(obj.metadata.uid)) {
+                        // If the server changed from any other state to ready (and it hasn't been ready before),
+                        // attempt to ping it and look at its players and instances.
+                        readyGameServers.add(obj.metadata.uid!!)
+                        processServerAdded(obj)
+                    }
+                }
+                "DELETED" -> {
+                    // A game server was removed
+                    val removed = kubernetesObjects.removeIf { it.metadata.uid == obj.metadata.uid }
+                    if (removed) {
+                        processServerRemoved(obj)
+                    }
+                }
+                else -> logger.warn("Unknown Kubernetes API event type: ${event.type}")
             }
         }
     }

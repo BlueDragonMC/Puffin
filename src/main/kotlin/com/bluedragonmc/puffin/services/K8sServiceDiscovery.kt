@@ -1,6 +1,7 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
 import io.grpc.ManagedChannelBuilder
 import io.kubernetes.client.openapi.Configuration
@@ -8,6 +9,7 @@ import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.V1PodList
 import io.kubernetes.client.util.Config
 import kotlinx.coroutines.runBlocking
+import java.time.Duration
 import java.util.UUID
 
 /**
@@ -17,6 +19,11 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
 
     private lateinit var api: CoreV1Api
     private val NAMESPACE = "default"
+
+    private val serverAddresses = Caffeine.newBuilder()
+        .expireAfterWrite(Duration.ofMinutes(30))
+        .expireAfterAccess(Duration.ofMinutes(30))
+        .build<String, String>()
 
     override fun initialize() {
         val client = Config.defaultClient()
@@ -46,8 +53,10 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
      */
     fun getProxyIP(player: UUID): String? {
         val proxy = app.get(PlayerTracker::class).getProxyOfPlayer(player) ?: return null
-        val pod = api.readNamespacedPod(proxy, NAMESPACE, null)
-        return pod.status?.podIP
+        return serverAddresses.get(proxy) {
+            val pod = api.readNamespacedPod(proxy, NAMESPACE, null)
+            pod.status?.podIP
+        }
     }
 
     /**
@@ -56,7 +65,9 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
      * address, because it is only accessible from inside the cluster.
      */
     fun getGameServerIP(serverName: String): String? {
-        val pod = api.readNamespacedPod(serverName, NAMESPACE, null)
-        return pod.status?.podIP
+        return serverAddresses.get(serverName) {
+            val pod = api.readNamespacedPod(serverName, NAMESPACE, null)
+            pod.status?.podIP
+        }
     }
 }

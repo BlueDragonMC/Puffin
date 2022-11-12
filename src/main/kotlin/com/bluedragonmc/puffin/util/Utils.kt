@@ -67,7 +67,11 @@ object Utils {
     }
 
     fun cleanupChannelsForServer(serverName: String) {
-        val addr = app.get(K8sServiceDiscovery::class).getGameServerIP(serverName)
+        val addr = try {
+            app.get(K8sServiceDiscovery::class).getGameServerIP(serverName)
+        } catch (e: Throwable) {
+            return // If the server address isn't cached, there likely isn't an established channel anyway
+        }
         addr?.let {
             val channel = channels.getIfPresent(it)
             channel?.shutdown()
