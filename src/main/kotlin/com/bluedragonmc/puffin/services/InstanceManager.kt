@@ -5,13 +5,17 @@ import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
 import io.grpc.StatusException
+import io.kubernetes.client.openapi.ApiException
+import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.util.Config
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Duration
 import java.util.*
 
 class InstanceManager(app: Puffin) : Service(app) {
@@ -20,6 +24,11 @@ class InstanceManager(app: Puffin) : Service(app) {
     private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
 
     private val client = DynamicKubernetesApi("agones.dev", "v1", "gameservers", Config.defaultClient())
+    private val defaultApi = CoreV1Api(Config.defaultClient())
+
+    private val syncAttempts = Caffeine.newBuilder()
+        .expireAfterWrite(Duration.ofMinutes(2))
+        .build<String, Int>()
 
     /**
      * A map of game server names to a list of instance IDs
@@ -35,21 +44,35 @@ class InstanceManager(app: Puffin) : Service(app) {
 
     override fun initialize() {
         Puffin.IO.launch {
-            kubernetesObjects.addAll(client.list().`object`.items)
-            logger.info("Found ${kubernetesObjects.size} game servers")
-            kubernetesObjects.forEach { obj ->
-                // Add only the game servers that are ready. If they aren't ready, they likely
-                // won't have an IP that gRPC can talk to.
-                val state = obj.raw.get("status")?.asJsonObject?.get("state")?.asString
-                if (state == "Ready") {
-                    processServerAdded(obj)
-                }
-            }
-
-            while(true) {
+            while (true) {
+                reloadGameServers()
                 watch()
                 logger.error("There was a problem watching Agones resources. Retrying...")
                 delay(5_000)
+            }
+        }
+    }
+
+    private fun reloadGameServers() {
+        val items = client.list().`object`.items
+        items.forEach { server ->
+            if (kubernetesObjects.none { it.metadata.uid == server.metadata.uid }) {
+                // New server found!
+                logger.info("New GameServer found during manual sync: ${server.metadata.name}")
+                kubernetesObjects.add(server)
+                val state = server.raw.get("status")?.asJsonObject?.get("state")?.asString
+                if (state == "Ready") {
+                    readyGameServers.add(server.metadata.uid!!)
+                    processServerAdded(server)
+                }
+            }
+        }
+        ArrayList(kubernetesObjects).forEach { obj ->
+            if (items.none { it.metadata.uid == obj.metadata.uid }) {
+                // A game server was removed during the sync!
+                logger.info("A GameServer was removed during manual sync: ${obj.metadata.name}")
+                processServerRemoved(obj)
+                kubernetesObjects.remove(obj)
             }
         }
     }
@@ -64,6 +87,7 @@ class InstanceManager(app: Puffin) : Service(app) {
                     // A new game server was added
                     kubernetesObjects.add(obj)
                 }
+
                 "MODIFIED" -> {
                     // An existing game server had its metadata or other information change
                     val index = kubernetesObjects.indexOfFirst { it.metadata.uid == obj.metadata.uid }
@@ -76,13 +100,17 @@ class InstanceManager(app: Puffin) : Service(app) {
                         processServerAdded(obj)
                     }
                 }
+
                 "DELETED" -> {
                     // A game server was removed
                     val removed = kubernetesObjects.removeIf { it.metadata.uid == obj.metadata.uid }
                     if (removed) {
                         processServerRemoved(obj)
+                    } else {
+                        logger.warn("Unknown GameServer was deleted: ${obj.metadata.name}")
                     }
                 }
+
                 else -> logger.warn("Unknown Kubernetes API event type: ${event.type}")
             }
         }
@@ -131,7 +159,29 @@ class InstanceManager(app: Puffin) : Service(app) {
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {
+
+            try {
+                defaultApi.readNamespacedPod(serverName, K8sServiceDiscovery.NAMESPACE, null)
+            } catch (e: ApiException) {
+                // If there was an error looking up the pod, it likely no longer exists.
+                // This means there was some sort of desync between our watch and the reality in the cluster.
+                e.printStackTrace()
+                logger.warn("Tried to sync server $serverName, but it doesn't exist! Starting a manual sync...")
+                reloadGameServers()
+                return
+            }
+
+            val attempts = syncAttempts.getIfPresent(serverName) ?: 0
+            syncAttempts.put(serverName, attempts + 1)
+
+            if (attempts > 10) {
+                logger.warn("Failed to sync players and instances with server $serverName after 10 attempts.")
+                e.printStackTrace()
+                return
+            }
+
             logger.info("Failed to sync players and instances with server $serverName, retrying...")
+            e.printStackTrace()
             delay(5000)
             sync(serverName)
         }
@@ -142,15 +192,15 @@ class InstanceManager(app: Puffin) : Service(app) {
      * (selectors) set in the [other] [CommonTypes.GameType] parameter.
      */
     fun filterRunningInstances(
-        other: GameType
+        other: GameType,
     ): Map<UUID, GameType> {
 
         val flags = other.selectorsList
 
         return instanceTypes.filter { (_, type) ->
             (!flags.contains(GameTypeFieldSelector.GAME_NAME) || type.name == other.name) &&
-            (!flags.contains(GameTypeFieldSelector.GAME_MODE) || type.mode == other.mode) &&
-            (!flags.contains(GameTypeFieldSelector.MAP_NAME) || type.mapName == other.mapName)
+                    (!flags.contains(GameTypeFieldSelector.GAME_MODE) || type.mode == other.mode) &&
+                    (!flags.contains(GameTypeFieldSelector.MAP_NAME) || type.mapName == other.mapName)
         }
     }
 

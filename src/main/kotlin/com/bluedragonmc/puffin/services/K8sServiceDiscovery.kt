@@ -17,8 +17,11 @@ import java.util.UUID
  */
 class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
 
+    companion object {
+        val NAMESPACE = System.getProperty("PUFFIN_K8S_NAMESPACE") ?: "default"
+    }
+
     private lateinit var api: CoreV1Api
-    private val NAMESPACE = "default"
 
     private val serverAddresses = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofMinutes(30))
