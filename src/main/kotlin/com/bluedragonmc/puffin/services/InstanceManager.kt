@@ -181,7 +181,6 @@ class InstanceManager(app: Puffin) : Service(app) {
             }
 
             logger.info("Failed to sync players and instances with server $serverName, retrying...")
-            e.printStackTrace()
             delay(5000)
             sync(serverName)
         }
