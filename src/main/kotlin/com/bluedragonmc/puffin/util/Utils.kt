@@ -7,6 +7,7 @@ import com.bluedragonmc.api.grpc.sendChatRequest
 import com.bluedragonmc.api.grpc.sendPlayerRequest
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.services.*
+import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
@@ -15,16 +16,27 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.fixedRateTimer
 
 object Utils {
     lateinit var app: ServiceHolder
-    private val logger = LoggerFactory.getLogger(this::class.java)
 
-    private val channels = Caffeine.newBuilder()
+    private val channels: Cache<String, ManagedChannel> = Caffeine.newBuilder()
         .expireAfterAccess(Duration.ofMinutes(5))
         .expireAfterWrite(Duration.ofMinutes(10))
-        .build<String, ManagedChannel>()
+        .evictionListener { addr: String?, channel: ManagedChannel?, _ ->
+            // Shut down all channels when they are removed from the cache for any reason.
+            if (channel != null && !channel.isShutdown) {
+                channel.shutdown()
+                if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+                    logger.error("Failed to shutdown gRPC channel to address $addr within 5 seconds!")
+                }
+            }
+        }
+        .build()
+
+    private val logger = LoggerFactory.getLogger(this::class.java)
 
     fun getChannelToPlayer(player: UUID): ManagedChannel? {
         val serverName = app.get(PlayerTracker::class).getServerOfPlayer(player) ?: run {

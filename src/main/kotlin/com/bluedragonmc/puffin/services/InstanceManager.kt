@@ -1,6 +1,7 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
+import com.bluedragonmc.api.grpc.CommonTypes.GameState
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.puffin.app.Puffin
@@ -155,7 +156,7 @@ class InstanceManager(app: Puffin) : Service(app) {
                     this.serverName = serverName
                     this.instanceUuid = instance.instanceUuid
                     this.gameType = instance.gameType
-                })
+                }, instance.gameStateOrNull)
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {
@@ -200,6 +201,14 @@ class InstanceManager(app: Puffin) : Service(app) {
             (!flags.contains(GameTypeFieldSelector.GAME_NAME) || type.name == other.name) &&
                     (!flags.contains(GameTypeFieldSelector.GAME_MODE) || type.mode == other.mode) &&
                     (!flags.contains(GameTypeFieldSelector.MAP_NAME) || type.mapName == other.mapName)
+        }
+    }
+
+    fun getJoinableInstances(
+        gameType: GameType
+    ): Int {
+        return filterRunningInstances(gameType).count { (instanceId, _) ->
+            app.get(GameStateManager::class).getEmptySlots(instanceId) > 0
         }
     }
 
@@ -278,7 +287,7 @@ class InstanceManager(app: Puffin) : Service(app) {
 
         override suspend fun createInstance(request: ServerTracking.InstanceCreatedRequest): Empty {
             // Called when an instance is created on a game server
-            handleInstanceCreated(request)
+            handleInstanceCreated(request, null)
             return Empty.getDefaultInstance()
         }
 
@@ -295,11 +304,17 @@ class InstanceManager(app: Puffin) : Service(app) {
         }
     }
 
-    private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
-        logger.info("Instance created: ${request.serverName}/${request.instanceUuid}")
+    private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest, gameState: GameState?) {
+        logger.info("Instance created: ${request.serverName}/${request.instanceUuid} " +
+                "(${request.gameType.name}/${request.gameType.mapName}/${request.gameType.mode})")
         // Add to map of instances to game types
         val instanceId = UUID.fromString(request.instanceUuid)
         instanceTypes[instanceId] = request.gameType
+
+        // If the game state is present, record it as well
+        if (gameState != null) {
+            app.get(GameStateManager::class).setGameState(instanceId, gameState)
+        }
 
         // Add to list of containers
         if (!gameServers.containsKey(request.serverName)) {

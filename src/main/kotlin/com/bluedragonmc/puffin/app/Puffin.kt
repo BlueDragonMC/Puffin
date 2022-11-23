@@ -87,6 +87,7 @@ class Puffin : ServiceHolder {
         register(gameStateManager)
         register(partyManager)
         register(privateMessageService)
+        register(MinInstanceService(app))
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         grpcServer.awaitTermination()

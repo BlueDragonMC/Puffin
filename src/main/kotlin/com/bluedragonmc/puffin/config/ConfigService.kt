@@ -2,6 +2,8 @@ package com.bluedragonmc.puffin.config
 
 import com.bluedragonmc.puffin.services.Service
 import com.bluedragonmc.puffin.services.ServiceHolder
+import java.nio.file.Path
+import java.nio.file.Paths
 
 class ConfigService(app: ServiceHolder) : Service(app) {
 
@@ -21,6 +23,8 @@ class ConfigService(app: ServiceHolder) : Service(app) {
             e.printStackTrace()
         }
     }
+
+    fun getWorldsFolder(): Path = Paths.get(config.worldsFolder)
 
     override fun close() {}
 
