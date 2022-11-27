@@ -5,6 +5,7 @@ import com.bluedragonmc.api.grpc.CommonTypes.GameState
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.puffin.app.Puffin
+import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
@@ -62,7 +63,7 @@ class InstanceManager(app: Puffin) : Service(app) {
                 logger.info("New GameServer found during manual sync: ${server.metadata.name}")
                 kubernetesObjects.add(server)
                 val state = server.raw.get("status")?.asJsonObject?.get("state")?.asString
-                if (state == "Ready") {
+                if (state == "Ready" || state == "Reserved" || state == "Allocated") {
                     readyGameServers.add(server.metadata.uid!!)
                     processServerAdded(server)
                 }
@@ -86,7 +87,9 @@ class InstanceManager(app: Puffin) : Service(app) {
             when (event.type) {
                 "ADDED" -> {
                     // A new game server was added
-                    kubernetesObjects.add(obj)
+                    if (kubernetesObjects.none { it.metadata.uid == obj.metadata.uid }) {
+                        kubernetesObjects.add(obj)
+                    }
                 }
 
                 "MODIFIED" -> {
@@ -124,6 +127,7 @@ class InstanceManager(app: Puffin) : Service(app) {
         gameServers.remove(gs.name)
         instanceTypes.entries.removeAll { it.key in instances }
         Utils.cleanupChannelsForServer(gs.name)
+        app.get(ApiService::class).sendUpdate("gameServer", "remove", gs.name, null)
     }
 
     private fun processServerAdded(`object`: DynamicKubernetesObject) {
@@ -135,6 +139,10 @@ class InstanceManager(app: Puffin) : Service(app) {
         Puffin.IO.launch {
             sync(gs.name)
         }
+        app.get(ApiService::class).sendUpdate(
+            "gameServer", "add", gs.name,
+            app.get(ApiService::class).createJsonObjectForGameServer(gs)
+        )
     }
 
     private suspend fun sync(serverName: String) {
@@ -187,6 +195,9 @@ class InstanceManager(app: Puffin) : Service(app) {
         }
     }
 
+    fun getGameType(instanceId: UUID) = instanceTypes[instanceId]
+    fun getAllInstances() = instanceTypes.keys
+
     /**
      * Filters the currently-running instances using the flags
      * (selectors) set in the [other] [CommonTypes.GameType] parameter.
@@ -205,7 +216,7 @@ class InstanceManager(app: Puffin) : Service(app) {
     }
 
     fun getJoinableInstances(
-        gameType: GameType
+        gameType: GameType,
     ): Int {
         return filterRunningInstances(gameType).count { (instanceId, _) ->
             app.get(GameStateManager::class).getEmptySlots(instanceId) > 0
@@ -227,6 +238,10 @@ class InstanceManager(app: Puffin) : Service(app) {
      */
     fun getGameServerOf(instanceId: UUID): String? {
         return gameServers.entries.firstOrNull { it.value.contains(instanceId) }?.key
+    }
+
+    fun getInstancesInServer(serverName: String): Set<UUID> {
+        return gameServers[serverName] ?: emptySet()
     }
 
     /**
@@ -305,8 +320,10 @@ class InstanceManager(app: Puffin) : Service(app) {
     }
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest, gameState: GameState?) {
-        logger.info("Instance created: ${request.serverName}/${request.instanceUuid} " +
-                "(${request.gameType.name}/${request.gameType.mapName}/${request.gameType.mode})")
+        logger.info(
+            "Instance created: ${request.serverName}/${request.instanceUuid} " +
+                    "(${request.gameType.name}/${request.gameType.mapName}/${request.gameType.mode})"
+        )
         // Add to map of instances to game types
         val instanceId = UUID.fromString(request.instanceUuid)
         instanceTypes[instanceId] = request.gameType
@@ -322,6 +339,10 @@ class InstanceManager(app: Puffin) : Service(app) {
             gameServers[request.serverName] = mutableSetOf()
         }
         gameServers[request.serverName]!!.add(instanceId)
+        app.get(ApiService::class).sendUpdate(
+            "instance", "add", request.instanceUuid,
+            app.get(ApiService::class).createJsonObjectForInstance(request.instanceUuid)
+        )
     }
 
     private fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
@@ -329,5 +350,6 @@ class InstanceManager(app: Puffin) : Service(app) {
         val instanceId = UUID.fromString(request.instanceUuid)
         gameServers[request.serverName]?.remove(instanceId)
         instanceTypes.remove(instanceId)
+        app.get(ApiService::class).sendUpdate("instance", "remove", request.instanceUuid, null)
     }
 }

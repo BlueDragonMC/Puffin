@@ -1,6 +1,7 @@
 package com.bluedragonmc.puffin.app
 
 import com.bluedragonmc.puffin.config.ConfigService
+import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.services.*
 import com.bluedragonmc.puffin.util.Utils
 import io.grpc.ServerBuilder
@@ -88,6 +89,7 @@ class Puffin : ServiceHolder {
         register(partyManager)
         register(privateMessageService)
         register(MinInstanceService(app))
+        register(ApiService(app))
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         grpcServer.awaitTermination()

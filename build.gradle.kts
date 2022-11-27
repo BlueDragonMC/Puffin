@@ -18,15 +18,15 @@ repositories {
 
 val grpcKotlinVersion = "1.3.0"
 val protoVersion = "3.21.9"
-val grpcVersion = "1.50.2"
+val grpcVersion = "1.51.0"
 
 dependencies {
     testImplementation(kotlin("test"))
 
     implementation("ch.qos.logback:logback:0.5")
-    implementation("ch.qos.logback:logback-classic:1.4.4")
+    implementation("ch.qos.logback:logback-classic:1.4.5")
 
-    implementation("io.kubernetes:client-java:16.0.1")
+    implementation("io.kubernetes:client-java:16.0.2")
 
     implementation("org.litote.kmongo:kmongo:4.7.2")
     implementation("org.litote.kmongo:kmongo-coroutine:4.7.2")
@@ -42,6 +42,8 @@ dependencies {
     implementation("io.grpc:grpc-stub:$grpcVersion")
     implementation("io.grpc:grpc-kotlin-stub:$grpcKotlinVersion")
     implementation("com.google.protobuf:protobuf-kotlin:$protoVersion")
+
+    implementation("org.java-websocket:Java-WebSocket:1.5.3")
 }
 
 tasks.test {

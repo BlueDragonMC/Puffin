@@ -1,6 +1,8 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
+import com.bluedragonmc.puffin.dashboard.ApiService
+import com.google.gson.JsonObject
 import com.google.protobuf.Empty
 import kotlinx.coroutines.runBlocking
 import java.util.*
@@ -89,6 +91,8 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             if (playerServers.remove(UUID.fromString(request.uuid)) == null)
                 logger.warn("Player logged out without a recorded proxy server: uuid=${request.uuid}")
 
+            app.get(ApiService::class).sendUpdate("player", "logout", request.uuid, null)
+
             return Empty.getDefaultInstance()
         }
 
@@ -97,6 +101,10 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.instanceId)
             playerServers[UUID.fromString(request.uuid)] = request.serverName
             logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
+            app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {
+                addProperty("instance", request.instanceId)
+                addProperty("serverName", request.serverName)
+            })
             return Empty.getDefaultInstance()
         }
 
@@ -105,6 +113,10 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.newInstance)
             playerServers[UUID.fromString(request.uuid)] = request.newServerName
             logger.info("Player Transfer > Player ${request.uuid} switched to instance ${request.newServerName}/${request.newInstance}")
+            app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {
+                addProperty("instance", request.newInstance)
+                addProperty("serverName", request.newServerName)
+            })
             return Empty.getDefaultInstance()
         }
 

@@ -9,7 +9,7 @@ import com.github.benmanes.caffeine.cache.Caffeine
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Paths
 import java.time.Duration
-import java.util.Properties
+import java.util.*
 import kotlin.io.path.inputStream
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
@@ -53,8 +53,10 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
     }
 
     private fun isSufficient(gameType: GameType): Boolean {
-        val joinableInstances = app.get(InstanceManager::class).getJoinableInstances(gameType) // The amount of instances which players can join
-        val totalInstances = app.get(InstanceManager::class).filterRunningInstances(gameType).size // The current amount of instances
+        val joinableInstances = app.get(InstanceManager::class)
+            .getJoinableInstances(gameType) // The amount of instances which players can join
+        val totalInstances =
+            app.get(InstanceManager::class).filterRunningInstances(gameType).size // The current amount of instances
 
         val value = properties.getProperty(gameType.name + "." + gameType.mapName + "." + gameType.mode)
             ?: properties.getProperty(gameType.name + "." + gameType.mapName)
@@ -100,5 +102,9 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
                 recentlyStarted.invalidate(gameType)
             }
         }
+    }
+
+    fun getGameTypes(): List<GameType> {
+        return types
     }
 }
