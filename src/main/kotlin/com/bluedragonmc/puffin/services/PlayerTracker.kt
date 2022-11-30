@@ -28,6 +28,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     private val logoutActions = mutableListOf<Consumer<UUID>>()
 
     fun getPlayersInInstance(instanceId: UUID) = playerInstances.filter { it.value == instanceId }.map { it.key }
+    fun getPlayerCountOfInstance(instanceId: UUID) = playerInstances.count { it.value == instanceId }
     fun getProxyOfPlayer(player: UUID) = playerProxies[player]
     fun getInstanceOfPlayer(uuid: UUID) = playerInstances[uuid]
     fun getServerOfPlayer(player: UUID) =
