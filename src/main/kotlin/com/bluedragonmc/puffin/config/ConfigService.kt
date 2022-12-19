@@ -12,7 +12,8 @@ class ConfigService(app: ServiceHolder) : Service(app) {
     private fun readConfig() = PuffinConfig(
         System.getenv("PUFFIN_WORLD_FOLDER"),
         System.getenv("PUFFIN_MONGO_HOSTNAME") ?: "mongo",
-        System.getenv("PUFFIN_MONGO_PORT")?.toInt() ?: 27017
+        System.getenv("PUFFIN_MONGO_PORT")?.toInt() ?: 27017,
+        System.getenv("PUFFIN_LUCKPERMS_URL") ?: "http://luckperms:8080",
     )
 
     override fun initialize() {

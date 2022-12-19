@@ -52,7 +52,6 @@ class Puffin : ServiceHolder {
 
     fun initialize() {
 
-        INSTANCE = this
         val app = this
         val start = System.nanoTime()
         val port = 50051
@@ -79,9 +78,9 @@ class Puffin : ServiceHolder {
         logger.info("gRPC server started on port $port.")
 
         register(ConfigService(app))
-        register(DatabaseConnection(app))
         register(Utils.UtilsService(app))
         register(playerTracker)
+        register(DatabaseConnection(app))
         register(K8sServiceDiscovery(app))
         register(instanceManager)
         register(queue)
@@ -96,12 +95,6 @@ class Puffin : ServiceHolder {
     }
 
     companion object {
-
-        /**
-         * Provides static access to Puffin. This should be avoided wherever possible.
-         */
-        lateinit var INSTANCE: Puffin
-
         internal val IO = object : CoroutineScope {
             override val coroutineContext: CoroutineContext =
                 Dispatchers.IO + SupervisorJob() + CoroutineName("Puffin I/O")

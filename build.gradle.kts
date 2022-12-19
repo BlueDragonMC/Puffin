@@ -44,6 +44,8 @@ dependencies {
     implementation("com.google.protobuf:protobuf-kotlin:$protoVersion")
 
     implementation("org.java-websocket:Java-WebSocket:1.5.3")
+
+    implementation("com.squareup.okhttp3:okhttp:4.10.0")
 }
 
 tasks.test {

@@ -5,16 +5,22 @@ import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.google.gson.Gson
+import com.google.gson.JsonObject
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.client.model.Filters
 import kotlinx.coroutines.runBlocking
+import okhttp3.CacheControl
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.bson.Document
 import org.litote.kmongo.coroutine.CoroutineClient
 import org.litote.kmongo.coroutine.CoroutineCollection
 import org.litote.kmongo.coroutine.CoroutineDatabase
 import org.litote.kmongo.coroutine.coroutine
 import org.litote.kmongo.reactivestreams.KMongo
+import java.io.File
 import java.net.Socket
 import java.time.Duration
 import java.util.*
@@ -22,12 +28,15 @@ import java.util.concurrent.TimeUnit
 
 class DatabaseConnection(app: Puffin) : Service(app) {
 
-    private lateinit var client: CoroutineClient
+    private lateinit var mongoClient: CoroutineClient
+    private lateinit var httpClient: OkHttpClient
+
+    private val cacheControl = CacheControl.Builder().maxAge(30, TimeUnit.SECONDS).build()
+    private val gson = Gson()
 
     private lateinit var db: CoroutineDatabase
     private lateinit var playersCollection: CoroutineCollection<Document>
     private lateinit var mapsCollection: CoroutineCollection<Document>
-    private lateinit var groupsCollection: CoroutineCollection<Document>
 
     private val builder = Caffeine.newBuilder()
         .maximumSize(10_000)
@@ -36,20 +45,16 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     private val uuidCache: Cache<String, UUID> = builder.build()
     private val usernameCache: Cache<UUID, String> = builder.build()
     private val userColorCache: Cache<UUID, String> = builder.build()
-    private val groupCache: Cache<String, Document> = builder.build()
     private val mapDataCache: Cache<String, Document> = builder.build()
 
-    suspend fun getPlayerDocument(uuid: UUID): Document? = playersCollection.findOneById(uuid.toString())
-
-    fun getPlayerNameColor(uuid: UUID): String? = userColorCache.get(uuid) {
-        runBlocking {
-            val groupName = getPlayerDocument(uuid)?.getList("groups", String::class.java)?.firstOrNull()
-                ?: return@runBlocking "#aaaaaa" // Default color
-            val group = groupCache.get(groupName) {
-                runBlocking { groupsCollection.findOneById(groupName) }
-            }
-            group?.getString("color") ?: "#aaaaaa"
-        }
+    fun getPlayerNameColor(uuid: UUID): String = userColorCache.get(uuid) {
+        val baseUrl = app.get(ConfigService::class).config.luckPermsApiUrl
+        val request = Request.Builder()
+            .url("$baseUrl/user/$uuid/meta")
+            .get()
+            .build()
+        val reply = gson.fromJson(httpClient.newCall(request).execute().body?.toString(), JsonObject::class.java)
+        reply.get("meta")?.asJsonObject?.get("rankcolor")?.asString ?: "#aaaaaa"
     }
 
     fun getPlayerName(uuid: UUID): String? = usernameCache.get(uuid) {
@@ -71,37 +76,55 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         }
     }
 
+    private fun evictCachesForPlayer(player: UUID) {
+        val username = usernameCache.getIfPresent(player)
+        uuidCache.invalidate(username)
+        usernameCache.invalidate(player)
+        userColorCache.invalidate(player)
+    }
+
     private fun onConnected() {
         val config = app.get(ConfigService::class).config
-        client = KMongo.createClient(MongoClientSettings.builder()
+        mongoClient = KMongo.createClient(MongoClientSettings.builder()
             .applyConnectionString(ConnectionString("mongodb://${config.mongoHostname}:${config.mongoPort}"))
             .applyToSocketSettings { block ->
                 block.connectTimeout(5, TimeUnit.SECONDS)
             }.applyToClusterSettings { block ->
                 block.serverSelectionTimeout(5, TimeUnit.SECONDS)
-            }.build()).coroutine
+            }.build()
+        ).coroutine
 
-        db = client.getDatabase("bluedragon")
+        db = mongoClient.getDatabase("bluedragon")
 
         playersCollection = db.getCollection("players")
         mapsCollection = db.getCollection("maps")
-        groupsCollection = db.getCollection("groups")
     }
 
     override fun initialize() {
         val config = app.get(ConfigService::class).config
+        this.httpClient = OkHttpClient.Builder()
+            .cache(okhttp3.Cache(File("/tmp/okhttp"), 50_000_000))
+            .addNetworkInterceptor { chain ->
+                chain.proceed(chain.request()).newBuilder()
+                    .addHeader("Cache-Control", cacheControl.toString())
+                    .build()
+            }
+            .build()
         // Wait for the port to become available, then connect to the database normally.
         catchingTimer("mongo-connection-test", daemon = false, period = 5_000) {
             try {
                 // Check if MongoDB is ready for requests
-                Socket(config.mongoHostname,
-                    config.mongoPort).close() // Check if the port is open first; this is faster and doesn't require the creation of a whole client
+                Socket(
+                    config.mongoHostname,
+                    config.mongoPort
+                ).close() // Check if the port is open first; this is faster and doesn't require the creation of a whole client
                 KMongo.createClient(MongoClientSettings.builder()
                     .applyConnectionString(ConnectionString("mongodb://${config.mongoHostname}:${config.mongoPort}"))
                     .applyToSocketSettings { settings ->
                         settings.connectTimeout(2, TimeUnit.SECONDS)
                         settings.readTimeout(2, TimeUnit.SECONDS)
-                    }.build())
+                    }.build()
+                )
                     .close() // Create a client to verify that MongoDB is fully started and running on this port
             } catch (ignored: Throwable) {
                 logger.debug("Waiting 5 seconds to retry connection to MongoDB.")
@@ -112,10 +135,11 @@ class DatabaseConnection(app: Puffin) : Service(app) {
             onConnected()
             this.cancel()
         }
+        app.get(PlayerTracker::class).onLogout(::evictCachesForPlayer)
     }
 
     override fun close() {
-        client.close()
+        mongoClient.close()
 
         usernameCache.invalidateAll()
         usernameCache.cleanUp()
