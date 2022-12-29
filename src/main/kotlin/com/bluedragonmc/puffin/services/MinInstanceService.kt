@@ -3,7 +3,6 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.api.grpc.GsClient
-import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import kotlinx.coroutines.runBlocking
@@ -11,8 +10,6 @@ import java.nio.file.Paths
 import java.time.Duration
 import java.util.*
 import kotlin.io.path.inputStream
-import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.name
 
 /**
  * Requires a minimum number of joinable instances for each game type.
@@ -32,19 +29,32 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
         }
     }
 
-    private fun getAvailableGameTypes(): List<GameType> {
-        val root = app.get(ConfigService::class).getWorldsFolder()
-        val games = root.listDirectoryEntries().map { it.name }.filter { !it.startsWith('_') }
-        return games.flatMap { gameName ->
-            root.resolve(gameName).listDirectoryEntries()
-                .filter { !it.name.startsWith('_') }
-                .map { mapDir ->
-                    GameType.newBuilder()
-                        .setName(gameName)
-                        .setMapName(mapDir.name)
-                        .addAllSelectors(listOf(GameTypeFieldSelector.GAME_MODE, GameTypeFieldSelector.MAP_NAME))
-                        .build()
-                }
+    private fun getAvailableGameTypes(): List<GameType> = properties.keys.mapNotNull {
+        val split = it.toString().split("_")
+        when (split.size) {
+            2 -> GameType.newBuilder() // "<gameType>_<mapName>"
+                .setName(split[0])
+                .setMapName(split[1])
+                .addAllSelectors(listOf(GameTypeFieldSelector.GAME_NAME, GameTypeFieldSelector.MAP_NAME))
+                .build()
+
+            3 -> GameType.newBuilder() // "<gameType>_<mapName>_<mode>"
+                .setName(split[0])
+                .setMapName(split[1])
+                .setMode(split[2])
+                .addAllSelectors(
+                    listOf(
+                        GameTypeFieldSelector.GAME_NAME,
+                        GameTypeFieldSelector.MAP_NAME,
+                        GameTypeFieldSelector.GAME_MODE
+                    )
+                )
+                .build()
+
+            else -> {
+                logger.warn("Invalid config key in buffer-config.properties: \"$it\"")
+                null
+            }
         }
     }
 
@@ -58,8 +68,8 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
         val totalInstances =
             app.get(InstanceManager::class).filterRunningInstances(gameType).size // The current amount of instances
 
-        val value = properties.getProperty(gameType.name + "." + gameType.mapName + "." + gameType.mode)
-            ?: properties.getProperty(gameType.name + "." + gameType.mapName)
+        val value = properties.getProperty(gameType.name + "_" + gameType.mapName + "_" + gameType.mode)
+            ?: properties.getProperty(gameType.name + "_" + gameType.mapName)
             ?: return true
 
         // Modifiers:
