@@ -16,8 +16,6 @@ import kotlin.io.path.inputStream
  */
 class MinInstanceService(app: ServiceHolder) : Service(app) {
 
-    private val types = getAvailableGameTypes()
-
     private val recentlyStarted = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofSeconds(15))
         .build<GameType, Unit>()
@@ -61,6 +59,8 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
     private val properties = Properties().apply {
         load(Paths.get("/service/config/buffer-config.properties").inputStream())
     }
+
+    private val types = getAvailableGameTypes()
 
     private fun isSufficient(gameType: GameType): Boolean {
         val joinableInstances = app.get(InstanceManager::class)
