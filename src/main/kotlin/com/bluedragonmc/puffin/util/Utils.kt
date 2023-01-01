@@ -12,7 +12,6 @@ import com.github.benmanes.caffeine.cache.Caffeine
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.*
@@ -52,13 +51,13 @@ object Utils {
             logger.warn("Failed to get server address for game server '$serverName' (Can't get gRPC channel to the server)")
             return null
         }
-        return channels.get(addr) { addr ->
+        return channels.get(addr) {
             logger.debug("Building managed channel with address '$addr' and port '50051'.")
             ManagedChannelBuilder.forAddress(addr, 50051).usePlaintext().build()
         }
     }
 
-    fun getChannelToProxyOf(player: UUID): ManagedChannel? =
+    private fun getChannelToProxyOf(player: UUID): ManagedChannel? =
         app.get(K8sServiceDiscovery::class).getProxyIP(player)?.let {
             return channels.get(it) { addr ->
                 logger.debug("Building managed channel with address '$addr' and port '50051'.")
@@ -103,10 +102,6 @@ object Utils {
         }
     }
 
-    fun sendChatBlocking(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) = runBlocking {
-        sendChat(player, message, chatType)
-    }
-
     fun sendChatAsync(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) = Puffin.IO.launch {
         sendChat(player, message, chatType)
     }
@@ -115,28 +110,24 @@ object Utils {
         for (player in players) sendChat(player, message, chatType)
     }
 
-    fun sendChatBlocking(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) = runBlocking {
-        for (player in players) sendChat(player, message, chatType)
-    }
-
     fun sendChatAsync(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT) =
         Puffin.IO.launch {
             sendChat(players, message, chatType)
         }
 
-    suspend fun sendPlayerToInstance(player: UUID, instanceId: UUID) {
+    suspend fun sendPlayerToInstance(player: UUID, gameId: String) {
         val currentGameServer = app.get(PlayerTracker::class).getServerOfPlayer(player)
 
-        val im = app.get(InstanceManager::class)
+        val im = app.get(GameManager::class)
         val servers = im.getGameServers()
-        val serverName = im.getGameServerOf(instanceId)
+        val serverName = im.getGameServerOf(gameId)
 
         val channel = if (currentGameServer != serverName) {
             getChannelToProxyOf(player) // Send to the proxy if we're routing the player between game servers
         } else {
             getChannelToPlayer(player) // Send directly to the game server if we're routing the player between instances on the same server
         }?: run {
-            logger.warn("Failed to initialize the correct channel to send player $player from $currentGameServer to $serverName/$instanceId!")
+            logger.warn("Failed to initialize the correct channel to send player $player from $currentGameServer to $serverName/$gameId!")
             return
         }
 
@@ -154,7 +145,7 @@ object Utils {
             this.serverName = serverName!!
             this.gameServerIp = gameServerObj.address
             this.gameServerPort = gameServerObj.port!!
-            this.instanceId = instanceId.toString()
+            this.instanceId = gameId
         })
     }
 

@@ -63,10 +63,10 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
     private val types = getAvailableGameTypes()
 
     private fun isSufficient(gameType: GameType): Boolean {
-        val joinableInstances = app.get(InstanceManager::class)
+        val joinableInstances = app.get(GameManager::class)
             .getJoinableInstances(gameType) // The amount of instances which players can join
         val totalInstances =
-            app.get(InstanceManager::class).filterRunningInstances(gameType).size // The current amount of instances
+            app.get(GameManager::class).filterRunningGames(gameType).size // The current amount of instances
 
         val value = properties.getProperty(gameType.name + "_" + gameType.mapName + "_" + gameType.mode)
             ?: properties.getProperty(gameType.name + "_" + gameType.mapName)
@@ -93,7 +93,7 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
     }
 
     private fun ensureMinimumInstances() {
-        val im = app.get(InstanceManager::class)
+        val im = app.get(GameManager::class)
         val gameType = types.firstOrNull {
             !isSufficient(it) && recentlyStarted.getIfPresent(it) == null
         } ?: return

@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 import java.time.Duration
 import java.util.*
 
-class InstanceManager(app: Puffin) : Service(app) {
+class GameManager(app: Puffin) : Service(app) {
 
     private val lock = Any()
     private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
@@ -35,14 +35,14 @@ class InstanceManager(app: Puffin) : Service(app) {
     /**
      * A map of game server names to a list of instance IDs
      */
-    private val gameServers = mutableMapOf<String, MutableSet<UUID>>()
+    private val gameServers = mutableMapOf<String, MutableSet<String>>()
 
     private val readyGameServers = mutableListOf<String>()
 
     /**
-     * A map of instance IDs to their running game types
+     * A map of game IDs to their running game types
      */
-    private val instanceTypes = mutableMapOf<UUID, GameType>()
+    private val gameTypes = mutableMapOf<String, GameType>()
 
     override fun initialize() {
         Puffin.IO.launch {
@@ -125,7 +125,7 @@ class InstanceManager(app: Puffin) : Service(app) {
         logger.info("GameServer ${gs.name} was removed.")
         val instances = gameServers[gs.name] ?: emptySet()
         gameServers.remove(gs.name)
-        instanceTypes.entries.removeAll { it.key in instances }
+        gameTypes.entries.removeAll { it.key in instances }
         Utils.cleanupChannelsForServer(gs.name)
         app.get(ApiService::class).sendUpdate("gameServer", "remove", gs.name, null)
     }
@@ -157,12 +157,12 @@ class InstanceManager(app: Puffin) : Service(app) {
             app.get(PlayerTracker::class).updatePlayers(playersResponse)
             logger.info("Found ${playersResponse.playersCount} players on server $serverName")
             instancesResponse.instancesList.forEach { instance ->
-                val uuid = UUID.fromString(instance.instanceUuid)
-                instanceTypes[uuid] = instance.gameType
-                gameServers[serverName]!!.add(uuid)
+                val id = instance.instanceUuid
+                gameTypes[id] = instance.gameType
+                gameServers[serverName]!!.add(id)
                 handleInstanceCreated(instanceCreatedRequest {
                     this.serverName = serverName
-                    this.instanceUuid = instance.instanceUuid
+                    this.instanceUuid = id
                     this.gameType = instance.gameType
                 }, instance.gameStateOrNull)
             }
@@ -195,20 +195,20 @@ class InstanceManager(app: Puffin) : Service(app) {
         }
     }
 
-    fun getGameType(instanceId: UUID) = instanceTypes[instanceId]
-    fun getAllInstances() = instanceTypes.keys
+    fun getGameType(gameId: String) = gameTypes[gameId]
+    fun getAllGames() = gameTypes.keys
 
     /**
      * Filters the currently-running instances using the flags
      * (selectors) set in the [other] [CommonTypes.GameType] parameter.
      */
-    fun filterRunningInstances(
+    fun filterRunningGames(
         other: GameType,
-    ): Map<UUID, GameType> {
+    ): Map<String, GameType> {
 
         val flags = other.selectorsList
 
-        return instanceTypes.filter { (_, type) ->
+        return gameTypes.filter { (_, type) ->
             (!flags.contains(GameTypeFieldSelector.GAME_NAME) || type.name == other.name) &&
                     (!flags.contains(GameTypeFieldSelector.GAME_MODE) || type.mode == other.mode) &&
                     (!flags.contains(GameTypeFieldSelector.MAP_NAME) || type.mapName == other.mapName)
@@ -218,8 +218,8 @@ class InstanceManager(app: Puffin) : Service(app) {
     fun getJoinableInstances(
         gameType: GameType,
     ): Int {
-        return filterRunningInstances(gameType).count { (instanceId, _) ->
-            app.get(GameStateManager::class).getEmptySlots(instanceId) > 0
+        return filterRunningGames(gameType).count { (gameId, _) ->
+            app.get(GameStateManager::class).getEmptySlots(gameId) > 0
         }
     }
 
@@ -236,11 +236,11 @@ class InstanceManager(app: Puffin) : Service(app) {
      * registered instance IDs. Returns null if no
      * server was found.
      */
-    fun getGameServerOf(instanceId: UUID): String? {
-        return gameServers.entries.firstOrNull { it.value.contains(instanceId) }?.key
+    fun getGameServerOf(gameId: String): String? {
+        return gameServers.entries.firstOrNull { it.value.contains(gameId) }?.key
     }
 
-    fun getInstancesInServer(serverName: String): Set<UUID> {
+    fun getInstancesInServer(serverName: String): Set<String> {
         return gameServers[serverName] ?: emptySet()
     }
 
@@ -268,7 +268,7 @@ class InstanceManager(app: Puffin) : Service(app) {
 
             // Find any running instances with the "Lobby" game type.
             val gs = getGameServers()
-            val lobbies = filterRunningInstances(
+            val lobbies = filterRunningGames(
                 gameType {
                     name = "Lobby"
                     selectors += GameTypeFieldSelector.GAME_NAME
@@ -277,7 +277,7 @@ class InstanceManager(app: Puffin) : Service(app) {
 
             return findLobbyResponse {
                 found = false
-                for ((instanceId, gameServer) in lobbies) {
+                for ((gameId, gameServer) in lobbies) {
                     if (request.includeServerNamesCount > 0 && gameServer !in request.includeServerNamesList) continue
                     if (request.excludeServerNamesCount > 0 && gameServer in request.excludeServerNamesList) continue
                     val info = gs.find { it.name == gameServer } ?: continue
@@ -285,7 +285,7 @@ class InstanceManager(app: Puffin) : Service(app) {
                     serverName = gameServer!!
                     ip = info.address
                     port = info.port ?: 25565
-                    instanceUuid = instanceId.toString()
+                    instanceUuid = gameId
                     break
                 }
             }
@@ -321,35 +321,35 @@ class InstanceManager(app: Puffin) : Service(app) {
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest, gameState: GameState?) {
         logger.info(
-            "Instance created: ${request.serverName}/${request.instanceUuid} " +
+            "Game created: ${request.serverName}/${request.instanceUuid} " +
                     "(${request.gameType.name}/${request.gameType.mapName}/${request.gameType.mode})"
         )
         // Add to map of instances to game types
-        val instanceId = UUID.fromString(request.instanceUuid)
-        instanceTypes[instanceId] = request.gameType
+        val gameId = request.instanceUuid
+        gameTypes[gameId] = request.gameType
 
         // If the game state is present, record it as well
         if (gameState != null) {
-            app.get(GameStateManager::class).setGameState(instanceId, gameState)
+            app.get(GameStateManager::class).setGameState(gameId, gameState)
         }
 
         // Add to list of containers
         if (!gameServers.containsKey(request.serverName)) {
-            logger.warn("Instance was created without a PingMessage sent first. Game server name: ${request.serverName}, Instance ID: $instanceId.")
+            logger.warn("Game was created without a PingMessage sent first. Game server name: ${request.serverName}, Instance ID: $gameId.")
             gameServers[request.serverName] = mutableSetOf()
         }
-        gameServers[request.serverName]!!.add(instanceId)
+        gameServers[request.serverName]!!.add(gameId)
         app.get(ApiService::class).sendUpdate(
             "instance", "add", request.instanceUuid,
-            app.get(ApiService::class).createJsonObjectForInstance(request.instanceUuid)
+            app.get(ApiService::class).createJsonObjectForGame(request.instanceUuid)
         )
     }
 
     private fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
-        logger.info("Instance removed: ${request.serverName}/${request.instanceUuid}")
-        val instanceId = UUID.fromString(request.instanceUuid)
-        gameServers[request.serverName]?.remove(instanceId)
-        instanceTypes.remove(instanceId)
+        logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
+        val gameId = request.instanceUuid
+        gameServers[request.serverName]?.remove(gameId)
+        gameTypes.remove(gameId)
         app.get(ApiService::class).sendUpdate("instance", "remove", request.instanceUuid, null)
     }
 }

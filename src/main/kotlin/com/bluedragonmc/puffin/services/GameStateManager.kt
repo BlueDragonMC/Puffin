@@ -6,30 +6,28 @@ import com.bluedragonmc.api.grpc.ServerTracking
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.google.protobuf.Empty
-import java.util.*
 
 class GameStateManager(app: Puffin) : Service(app) {
 
-    private val emptyPlayerSlots = mutableMapOf<UUID, Int>()
-    private val states = mutableMapOf<UUID, GameState>()
+    private val emptyPlayerSlots = mutableMapOf<String, Int>()
+    private val states = mutableMapOf<String, GameState>()
 
-    fun hasState(instanceId: UUID) = emptyPlayerSlots.contains(instanceId)
-    fun getEmptySlots(instanceId: UUID) = emptyPlayerSlots[instanceId] ?: 0
+    fun getEmptySlots(gameId: String) = emptyPlayerSlots[gameId] ?: 0
 
-    fun setGameState(instanceId: UUID, state: GameState) {
-        emptyPlayerSlots[instanceId] = if (state.joinable) state.openSlots else 0
-        states[instanceId] = state
+    fun setGameState(gameId: String, state: GameState) {
+        emptyPlayerSlots[gameId] = if (state.joinable) state.openSlots else 0
+        states[gameId] = state
         app.get(ApiService::class).sendUpdate(
-            "instance", "update", instanceId.toString(),
-            app.get(ApiService::class).createJsonObjectForInstance(instanceId.toString())
+            "instance", "update", gameId,
+            app.get(ApiService::class).createJsonObjectForGame(gameId)
         )
     }
 
-    fun getState(instanceId: UUID) = states[instanceId]
+    fun getState(gameId: String) = states[gameId]
 
     inner class GameStateService : GameStateServiceGrpcKt.GameStateServiceCoroutineImplBase() {
         override suspend fun updateGameState(request: ServerTracking.GameStateUpdateRequest): Empty {
-            setGameState(UUID.fromString(request.instanceUuid), request.gameState)
+            setGameState(request.instanceUuid, request.gameState)
             return Empty.getDefaultInstance()
         }
     }

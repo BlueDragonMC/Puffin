@@ -18,7 +18,7 @@ class Queue(app: ServiceHolder) : Service(app) {
      */
     private fun sendPlayerToGame(player: UUID, gameType: GameType) {
         val partySize = app.get(PartyManager::class).partyOf(player)?.members?.size ?: 1
-        val instances = app.get(InstanceManager::class).filterRunningInstances(gameType)
+        val instances = app.get(GameManager::class).filterRunningGames(gameType)
         for (instance in instances.keys) {
             val emptySlots = app.get(GameStateManager::class).getEmptySlots(instance)
             if (emptySlots >= partySize) {
@@ -33,45 +33,34 @@ class Queue(app: ServiceHolder) : Service(app) {
     }
 
     /**
-     * Matches the [first] game type against the [other] game type,
-     * returning true if they match. The flags of the [first]
-     * game type are considered when matching against the [other] game type.
-     */
-    fun matchGameType(first: GameType, other: GameType): Boolean {
-        return (!first.selectorsList.contains(GameType.GameTypeFieldSelector.GAME_NAME) || first.name == other.name) &&
-                (!first.selectorsList.contains(GameType.GameTypeFieldSelector.MAP_NAME) || first.mapName == other.mapName) &&
-                (!first.selectorsList.contains(GameType.GameTypeFieldSelector.GAME_MODE) || first.mode == other.mode)
-    }
-
-    /**
      * Add a player to the Queue for the specified [gameType].
      */
     fun queuePlayer(player: UUID, gameType: GameType) {
         sendPlayerToGame(player, gameType)
     }
 
-    private suspend fun send(player: UUID, instanceId: UUID): Boolean {
+    private suspend fun send(player: UUID, gameId: String): Boolean {
 
         val gameStateManager = app.get(GameStateManager::class)
         val party = app.get(PartyManager::class).partyOf(player)
 
-        val emptySlots = gameStateManager.getEmptySlots(instanceId)
+        val emptySlots = gameStateManager.getEmptySlots(gameId)
         val requiredSlots = party?.members?.size ?: 1
 
         if (emptySlots < requiredSlots) {
-            logger.info("Attempted to send $requiredSlots player(s) to instance $instanceId, but it only has $emptySlots empty slots.")
+            logger.info("Attempted to send $requiredSlots player(s) to instance $gameId, but it only has $emptySlots empty slots.")
             return false
         }
 
         if (party != null) {
-            logger.info("Sending party of player $player (${party.members.size} members) to instance $instanceId.")
+            logger.info("Sending party of player $player (${party.members.size} members) to instance $gameId.")
             party.members.forEach { member ->
                 // Warp in the player's party when they are warped into a game
-                Utils.sendPlayerToInstance(member, instanceId)
+                Utils.sendPlayerToInstance(member, gameId)
             }
         } else {
-            logger.info("Sending player $player to instance $instanceId.")
-            Utils.sendPlayerToInstance(player, instanceId)
+            logger.info("Sending player $player to instance $gameId.")
+            Utils.sendPlayerToInstance(player, gameId)
         }
 
         return true

@@ -11,9 +11,9 @@ import java.util.function.Consumer
 class PlayerTracker(app: ServiceHolder) : Service(app) {
 
     /**
-     * A map of player UUIDs to instance UUIDs
+     * A map of player UUIDs to game IDs
      */
-    private val playerInstances = mutableMapOf<UUID, UUID>()
+    private val playerInstances = mutableMapOf<UUID, String>()
 
     /**
      * A map of player UUIDs to server names.
@@ -27,12 +27,12 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
 
     private val logoutActions = mutableListOf<Consumer<UUID>>()
 
-    fun getPlayersInInstance(instanceId: UUID) = playerInstances.filter { it.value == instanceId }.map { it.key }
-    fun getPlayerCountOfInstance(instanceId: UUID) = playerInstances.count { it.value == instanceId }
+    fun getPlayersInInstance(gameId: String) = playerInstances.filter { it.value == gameId }.map { it.key }
+    fun getPlayerCountOfInstance(gameId: String) = playerInstances.count { it.value == gameId }
     fun getProxyOfPlayer(player: UUID) = playerProxies[player]
     fun getInstanceOfPlayer(uuid: UUID) = playerInstances[uuid]
     fun getServerOfPlayer(player: UUID) =
-        playerServers[player] ?: playerInstances[player]?.let { app.get(InstanceManager::class).getGameServerOf(it) }
+        playerServers[player] ?: playerInstances[player]?.let { app.get(GameManager::class).getGameServerOf(it) }
 
     override fun close() {
         playerInstances.clear()
@@ -62,7 +62,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             playerInstances.size
         } else {
             // Get a list of matching instances
-            val instances = app.get(InstanceManager::class).filterRunningInstances(gameType).keys
+            val instances = app.get(GameManager::class).filterRunningGames(gameType).keys
             // Count the amount of players in any of these instances
             playerInstances.keys.count { playerUuid ->
                 instances.contains(playerInstances[playerUuid])
@@ -80,17 +80,18 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
 
         override suspend fun playerLogout(request: PlayerTrackerOuterClass.PlayerLogoutRequest): Empty {
             // Called when a player logs out of or otherwise disconnects from a proxy.
-            logger.info("Logout > ${request.username} (${request.uuid})")
-            logoutActions.forEach { it.accept(UUID.fromString(request.uuid)) }
+            val uuid = UUID.fromString(request.uuid)
+            logger.info("Logout > ${request.username} ($uuid)")
+            logoutActions.forEach { it.accept(uuid) }
 
-            if (playerInstances.remove(UUID.fromString(request.uuid)) == null)
-                logger.warn("Player logged out without a recorded instance: uuid=${request.uuid}")
+            if (playerInstances.remove(uuid) == null)
+                logger.warn("Player logged out without a recorded instance: uuid=$uuid")
 
-            if (playerProxies.remove(UUID.fromString(request.uuid)) == null)
-                logger.warn("Player logged out without a recorded proxy server: uuid=${request.uuid}")
+            if (playerProxies.remove(uuid) == null)
+                logger.warn("Player logged out without a recorded proxy server: uuid=$uuid")
 
-            if (playerServers.remove(UUID.fromString(request.uuid)) == null)
-                logger.warn("Player logged out without a recorded proxy server: uuid=${request.uuid}")
+            if (playerServers.remove(uuid) == null)
+                logger.warn("Player logged out without a recorded proxy server: uuid=$uuid")
 
             app.get(ApiService::class).sendUpdate("player", "logout", request.uuid, null)
 
@@ -99,7 +100,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
 
         override suspend fun playerInstanceChange(request: PlayerTrackerOuterClass.PlayerInstanceChangeRequest): Empty {
             // Called when a player changes instances on the same backend server.
-            playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.instanceId)
+            playerInstances[UUID.fromString(request.uuid)] = request.instanceId
             playerServers[UUID.fromString(request.uuid)] = request.serverName
             logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
             app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {
@@ -111,7 +112,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
 
         override suspend fun playerTransfer(request: PlayerTrackerOuterClass.PlayerTransferRequest): Empty {
             // Called when a player changes backend servers (including initial routing).
-            playerInstances[UUID.fromString(request.uuid)] = UUID.fromString(request.newInstance)
+            playerInstances[UUID.fromString(request.uuid)] = request.newInstance
             playerServers[UUID.fromString(request.uuid)] = request.newServerName
             logger.info("Player Transfer > Player ${request.uuid} switched to instance ${request.newServerName}/${request.newInstance}")
             app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {

@@ -12,7 +12,6 @@ import java.util.*
 class PartyManager(app: ServiceHolder) : Service(app) {
 
     private val parties = mutableSetOf<Party>()
-    private fun partyOf(player: String) = partyOf(UUID.fromString(player))
     internal fun partyOf(player: UUID) = parties.find { player in it.members }
     private fun createParty(leader: UUID) =
         Party(this, mutableListOf(leader), mutableMapOf(), leader).also { parties.add(it) }
@@ -26,10 +25,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
     private fun getUsername(uuid: UUID) = app.get(DatabaseConnection::class).run {
         val color = getPlayerNameColor(uuid)
         val username = getPlayerName(uuid) ?: uuid.toString()
-        if (color != null)
-            "<$color>$username"
-        else
-            username
+        return@run "<$color>$username"
     }
 
     private fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
@@ -212,9 +208,9 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             }
 
             // Make sure the instance is not full
-            val instanceId = UUID.fromString(request.instanceUuid)
+            val gameId = request.instanceUuid
             val emptySlots =
-                app.get(GameStateManager::class).getEmptySlots(instanceId) + tracker.getPlayersInInstance(instanceId)
+                app.get(GameStateManager::class).getEmptySlots(gameId) + tracker.getPlayersInInstance(gameId)
                     .count { party.members.contains(it) }
 
             if (party.members.size - 1 > emptySlots) {
@@ -226,7 +222,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 party.members.count { tracker.getInstanceOfPlayer(it) != tracker.getInstanceOfPlayer(party.leader) }
             party.members.forEach {
                 if (party.leader != it) {
-                    Utils.sendPlayerToInstance(it, instanceId)
+                    Utils.sendPlayerToInstance(it, gameId)
                 }
                 Utils.sendChat(it,
                     "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name}'>")

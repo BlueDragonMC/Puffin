@@ -56,7 +56,7 @@ class Puffin : ServiceHolder {
         val start = System.nanoTime()
         val port = 50051
 
-        val instanceManager = InstanceManager(app)
+        val gameManager = GameManager(app)
         val queue = Queue(app)
         val gameStateManager = GameStateManager(app)
         val partyManager = PartyManager(app)
@@ -64,8 +64,8 @@ class Puffin : ServiceHolder {
         val privateMessageService = PrivateMessageService(app)
 
         val grpcServer = ServerBuilder.forPort(port)
-            .addService(instanceManager.ServerDiscoveryService())
-            .addService(instanceManager.InstanceService())
+            .addService(gameManager.ServerDiscoveryService())
+            .addService(gameManager.InstanceService())
             .addService(queue.QueueService())
             .addService(gameStateManager.GameStateService())
             .addService(partyManager.PartyService())
@@ -82,7 +82,7 @@ class Puffin : ServiceHolder {
         register(playerTracker)
         register(DatabaseConnection(app))
         register(K8sServiceDiscovery(app))
-        register(instanceManager)
+        register(gameManager)
         register(queue)
         register(gameStateManager)
         register(partyManager)

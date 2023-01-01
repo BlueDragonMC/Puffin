@@ -32,7 +32,7 @@ class ApiService(app: ServiceHolder) : Service(app) {
             val decoded = gson.fromJson(message, JsonObject::class.java)
             when (decoded.get("request").asString) {
                 "getGameServers" -> {
-                    val im = app.get(InstanceManager::class)
+                    val im = app.get(GameManager::class)
                     val gameServers = im.getGameServers().map { gs ->
                         createJsonObjectForGameServer(gs)
                     }
@@ -49,14 +49,14 @@ class ApiService(app: ServiceHolder) : Service(app) {
                 "getInstances" -> conn.send(JsonObject().apply {
                     addProperty("type", "instances")
                     add("instances", JsonArray().apply {
-                        app.get(InstanceManager::class).getAllInstances().forEach { instanceId ->
-                            add(createJsonObjectForInstance(instanceId.toString()))
+                        app.get(GameManager::class).getAllGames().forEach { gameId ->
+                            add(createJsonObjectForGame(gameId))
                         }
                     })
                 }.toString())
 
                 "getInstance" -> conn.send(
-                    createJsonObjectForInstance(decoded.get("instance").asString).toString()
+                    createJsonObjectForGame(decoded.get("instance").asString).toString()
                 )
 
                 "getUsername" -> {
@@ -74,13 +74,13 @@ class ApiService(app: ServiceHolder) : Service(app) {
                         addProperty("type", "players")
                         add("players", JsonObject().apply {
                             // Get a list of all instances
-                            val instances = app.get(InstanceManager::class).getAllInstances()
+                            val instances = app.get(GameManager::class).getAllGames()
                             instances.associateWith {
                                 // Associate each instance with its player list
                                 app.get(PlayerTracker::class).getPlayersInInstance(it)
                             }.forEach { (instance, players) ->
                                 // Convert the map into a Gson-accepted format
-                                add(instance.toString(), JsonArray().apply {
+                                add(instance, JsonArray().apply {
                                     players.forEach { add(it.toString()) }
                                 })
                             }
@@ -122,38 +122,37 @@ class ApiService(app: ServiceHolder) : Service(app) {
         ws.broadcast(obj.toString())
     }
 
-    fun createJsonObjectForGameServer(gs: InstanceManager.GameServer): JsonObject {
+    fun createJsonObjectForGameServer(gs: GameManager.GameServer): JsonObject {
         return JsonObject().apply {
             add("raw", gs.`object`.raw)
             addProperty("name", gs.name)
             addProperty("address", gs.address)
             addProperty("port", gs.port)
             val instances = JsonArray().apply {
-                app.get(InstanceManager::class).getInstancesInServer(gs.name)
-                    .forEach { add(it.toString()) }
+                app.get(GameManager::class).getInstancesInServer(gs.name)
+                    .forEach { add(it) }
             }
             add("instances", instances)
         }
     }
 
-    fun createJsonObjectForInstance(instanceId: String): JsonObject {
-        val instanceManager = app.get(InstanceManager::class)
+    fun createJsonObjectForGame(gameId: String): JsonObject {
+        val gameManager = app.get(GameManager::class)
         val stateManager = app.get(GameStateManager::class)
         val playerTracker = app.get(PlayerTracker::class)
         return JsonObject().apply {
             addProperty("type", "instance")
-            addProperty("id", instanceId)
-            val uuid = UUID.fromString(instanceId)
-            addProperty("emptySlots", stateManager.getEmptySlots(uuid))
-            addProperty("gameServer", instanceManager.getGameServerOf(uuid))
-            val state = stateManager.getState(uuid)
+            addProperty("id", gameId)
+            addProperty("emptySlots", stateManager.getEmptySlots(gameId))
+            addProperty("gameServer", gameManager.getGameServerOf(gameId))
+            val state = stateManager.getState(gameId)
             add("gameState", JsonObject().apply {
                 addProperty("joinable", state?.joinable)
                 addProperty("openSlots", state?.openSlots)
-                addProperty("playerCount", playerTracker.getPlayerCountOfInstance(uuid))
+                addProperty("playerCount", playerTracker.getPlayerCountOfInstance(gameId))
                 addProperty("stateName", state?.gameState?.name)
             })
-            val type = instanceManager.getGameType(uuid)
+            val type = gameManager.getGameType(gameId)
             add("gameType", JsonObject().apply {
                 addProperty("name", type?.name)
                 addProperty("mapName", type?.mapName)
@@ -168,8 +167,8 @@ class ApiService(app: ServiceHolder) : Service(app) {
             addProperty("mapName", type.mapName)
             addProperty("mode", type.mode)
             add("instances", JsonArray().apply {
-                for (instance in app.get(InstanceManager::class).filterRunningInstances(type).keys) {
-                    add(instance.toString())
+                for (instance in app.get(GameManager::class).filterRunningGames(type).keys) {
+                    add(instance)
                 }
             })
         }
