@@ -5,6 +5,7 @@ import com.bluedragonmc.api.grpc.GameStateServiceGrpcKt
 import com.bluedragonmc.api.grpc.ServerTracking
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.dashboard.ApiService
+import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.protobuf.Empty
 
 class GameStateManager(app: Puffin) : Service(app) {
@@ -26,7 +27,7 @@ class GameStateManager(app: Puffin) : Service(app) {
     fun getState(gameId: String) = states[gameId]
 
     inner class GameStateService : GameStateServiceGrpcKt.GameStateServiceCoroutineImplBase() {
-        override suspend fun updateGameState(request: ServerTracking.GameStateUpdateRequest): Empty {
+        override suspend fun updateGameState(request: ServerTracking.GameStateUpdateRequest): Empty = handleRPC {
             setGameState(request.instanceUuid, request.gameState)
             return Empty.getDefaultInstance()
         }

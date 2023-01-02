@@ -3,6 +3,7 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.VelocityMessage
 import com.bluedragonmc.api.grpc.VelocityMessageServiceGrpcKt
 import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
 import java.time.Duration
@@ -21,8 +22,9 @@ class PrivateMessageService(app: ServiceHolder) : Service(app) {
         .build<UUID, UUID>()
 
     inner class VelocityMessageService : VelocityMessageServiceGrpcKt.VelocityMessageServiceCoroutineImplBase() {
-        override suspend fun sendMessage(request: VelocityMessage.PrivateMessageRequest): Empty {
-            val finalMessage = "<p2><lang:command.msg.received:'<p1>${request.senderUsername}':'<gray>${request.message}'>"
+        override suspend fun sendMessage(request: VelocityMessage.PrivateMessageRequest): Empty = handleRPC {
+            val finalMessage =
+                "<p2><lang:command.msg.received:'<p1>${request.senderUsername}':'<gray>${request.message}'>"
             val recipient = if (request.recipientUuid.isNullOrBlank()) {
                 lastReplyCache.getIfPresent(UUID.fromString(request.senderUuid))
             } else {

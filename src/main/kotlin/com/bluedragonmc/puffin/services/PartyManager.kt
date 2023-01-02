@@ -6,6 +6,7 @@ import com.bluedragonmc.api.grpc.PartySvc
 import com.bluedragonmc.api.grpc.partyListResponse
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
+import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.protobuf.Empty
 import java.util.*
 
@@ -29,10 +30,14 @@ class PartyManager(app: ServiceHolder) : Service(app) {
     }
 
     private fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
-        Utils.sendChatAsync(party.members,
-            "\n<p2><lang:puffin.party.invite.other:'${inviter.name}':'${invitee.name}'>")
-        Utils.sendChatAsync(invitee,
-            "\n<p2><click:run_command:/party accept $inviter><lang:puffin.party.invite.1:'${inviter.name}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>\n")
+        Utils.sendChatAsync(
+            party.members,
+            "\n<p2><lang:puffin.party.invite.other:'${inviter.name}':'${invitee.name}'>"
+        )
+        Utils.sendChatAsync(
+            invitee,
+            "\n<p2><click:run_command:/party accept $inviter><lang:puffin.party.invite.1:'${inviter.name}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>\n"
+        )
     }
 
     data class Party(
@@ -49,10 +54,13 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 members.clear()
                 leader = UUID(0L, 0L)
                 svc.parties.remove(this)
-            } else if(svc.app.get(PlayerTracker::class).getInstanceOfPlayer(leader) == null) {
+            } else if (svc.app.get(PlayerTracker::class).getInstanceOfPlayer(leader) == null) {
                 // If the party leader left, transfer the party to one of the members
                 val member = members.first { it != leader }
-                Utils.sendChatAsync(members, "<yellow><lang:puffin.transfer.auto:'${svc.getUsername(member)}':'${svc.getUsername(leader)}'>")
+                Utils.sendChatAsync(
+                    members,
+                    "<yellow><lang:puffin.transfer.auto:'${svc.getUsername(member)}':'${svc.getUsername(leader)}'>"
+                )
                 leader = member
             }
         }
@@ -70,7 +78,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
     }
 
     inner class PartyService : PartyServiceGrpcKt.PartyServiceCoroutineImplBase() {
-        override suspend fun acceptInvitation(request: PartySvc.PartyAcceptInviteRequest): Empty {
+        override suspend fun acceptInvitation(request: PartySvc.PartyAcceptInviteRequest): Empty = handleRPC {
             val partyOwner = UUID.fromString(request.partyOwnerUuid)
             val player = UUID.fromString(request.playerUuid)
             val party = partyOf(partyOwner)
@@ -82,15 +90,17 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 Utils.sendChat(party.members, "\n<p2><lang:puffin.party.join.other:'${player.name}'>")
                 party.members.add(player)
                 party.invitations.remove(player)
-                Utils.sendChat(player,
-                    "\n<p2><lang:puffin.party.join.self:'${partyOwner.name}'>\n")
+                Utils.sendChat(
+                    player,
+                    "\n<p2><lang:puffin.party.join.self:'${partyOwner.name}'>\n"
+                )
             } else {
                 Utils.sendChat(player, "<red><lang:puffin.party.join.no_invitation>")
             }
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun inviteToParty(request: PartySvc.PartyInviteRequest): Empty {
+        override suspend fun inviteToParty(request: PartySvc.PartyInviteRequest): Empty = handleRPC {
             val partyOwner = UUID.fromString(request.partyOwnerUuid)
             val player = UUID.fromString(request.playerUuid)
             if (partyOwner == player) {
@@ -103,27 +113,31 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 this.cancel()
                 if (party.invitations.contains(player)) {
                     party.invitations.remove(player)
-                    Utils.sendChatAsync(player,
-                        "<p2><lang:puffin.party.invite.expired:'${partyOwner.name}'>")
+                    Utils.sendChatAsync(
+                        player,
+                        "<p2><lang:puffin.party.invite.expired:'${partyOwner.name}'>"
+                    )
                 }
             }
             party.invitations[player] = timer
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun partyChat(request: PartySvc.PartyChatRequest): Empty {
+        override suspend fun partyChat(request: PartySvc.PartyChatRequest): Empty = handleRPC {
             val uuid = UUID.fromString(request.playerUuid)
             val party = partyOf(uuid)
             if (party != null) {
-                Utils.sendChatAsync(party.members,
-                    "<p3><lang:puffin.party.chat.prefix> <white>${uuid.name}<gray>: <white>${request.message}")
+                Utils.sendChatAsync(
+                    party.members,
+                    "<p3><lang:puffin.party.chat.prefix> <white>${uuid.name}<gray>: <white>${request.message}"
+                )
             } else {
                 Utils.sendChatAsync(uuid, "<red><lang:puffin.party.chat.not_found>")
             }
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun partyList(request: PartySvc.PartyListRequest): PartySvc.PartyListResponse {
+        override suspend fun partyList(request: PartySvc.PartyListRequest): PartySvc.PartyListResponse = handleRPC {
             val uuid = UUID.fromString(request.playerUuid)
             val party = partyOf(uuid)
             if (party != null) {
@@ -142,7 +156,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             return partyListResponse { /* empty response - no party found */ }
         }
 
-        override suspend fun removeFromParty(request: PartySvc.PartyRemoveRequest): Empty {
+        override suspend fun removeFromParty(request: PartySvc.PartyRemoveRequest): Empty = handleRPC {
             val player = UUID.fromString(request.playerUuid)
             val partyOwner = UUID.fromString(request.partyOwnerUuid)
 
@@ -153,8 +167,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 if (party != null) {
                     if (party.members.contains(player)) {
                         party.members.remove(player)
-                        Utils.sendChat(party.members,
-                            "\n<p2><lang:puffin.party.kick.success:'${player.name}'>\n")
+                        Utils.sendChat(
+                            party.members,
+                            "\n<p2><lang:puffin.party.kick.success:'${player.name}'>\n"
+                        )
                         Utils.sendChat(player, "\n<p2><lang:puffin.party.kick.removed>\n")
                         party.update()
                     } else {
@@ -167,7 +183,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun transferParty(request: PartySvc.PartyTransferRequest): Empty {
+        override suspend fun transferParty(request: PartySvc.PartyTransferRequest): Empty = handleRPC {
 
             val oldUuid = UUID.fromString(request.playerUuid)
             val newUuid = UUID.fromString(request.newOwnerUuid)
@@ -186,13 +202,15 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 return Empty.getDefaultInstance()
             }
             party.leader = newUuid
-            Utils.sendChat(party.members,
-                "\n<p2><lang:puffin.party.transfer.success:'${newUuid.name}'>\n")
+            Utils.sendChat(
+                party.members,
+                "\n<p2><lang:puffin.party.transfer.success:'${newUuid.name}'>\n"
+            )
 
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun warpParty(request: PartySvc.PartyWarpRequest): Empty {
+        override suspend fun warpParty(request: PartySvc.PartyWarpRequest): Empty = handleRPC {
 
             val tracker = app.get(PlayerTracker::class)
             val uuid = UUID.fromString(request.partyOwnerUuid)
@@ -203,7 +221,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 return Empty.getDefaultInstance()
             }
             if (party.leader != uuid) {
-                Utils.sendChat(uuid, "<red><lang:puffin.party.transfer.not_leader>") // todo make a new translation string for this
+                Utils.sendChat(
+                    uuid,
+                    "<red><lang:puffin.party.transfer.not_leader>"
+                ) // todo make a new translation string for this
                 return Empty.getDefaultInstance()
             }
 
@@ -224,8 +245,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 if (party.leader != it) {
                     Utils.sendPlayerToInstance(it, gameId)
                 }
-                Utils.sendChat(it,
-                    "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name}'>")
+                Utils.sendChat(
+                    it,
+                    "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name}'>"
+                )
             }
 
             return Empty.getDefaultInstance()

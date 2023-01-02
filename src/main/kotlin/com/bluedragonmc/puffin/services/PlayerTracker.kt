@@ -2,6 +2,7 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.puffin.dashboard.ApiService
+import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.gson.JsonObject
 import com.google.protobuf.Empty
 import kotlinx.coroutines.runBlocking
@@ -71,14 +72,14 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     }
 
     inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
-        override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty {
+        override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty = handleRPC {
             // Called when a player logs into a proxy.
             logger.info("Login > ${request.username} (${request.uuid})")
             playerProxies[UUID.fromString(request.uuid)] = request.proxyPodName
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun playerLogout(request: PlayerTrackerOuterClass.PlayerLogoutRequest): Empty {
+        override suspend fun playerLogout(request: PlayerTrackerOuterClass.PlayerLogoutRequest): Empty = handleRPC {
             // Called when a player logs out of or otherwise disconnects from a proxy.
             val uuid = UUID.fromString(request.uuid)
             logger.info("Logout > ${request.username} ($uuid)")
@@ -98,19 +99,20 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun playerInstanceChange(request: PlayerTrackerOuterClass.PlayerInstanceChangeRequest): Empty {
-            // Called when a player changes instances on the same backend server.
-            playerInstances[UUID.fromString(request.uuid)] = request.instanceId
-            playerServers[UUID.fromString(request.uuid)] = request.serverName
-            logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
-            app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {
-                addProperty("instance", request.instanceId)
-                addProperty("serverName", request.serverName)
-            })
-            return Empty.getDefaultInstance()
-        }
+        override suspend fun playerInstanceChange(request: PlayerTrackerOuterClass.PlayerInstanceChangeRequest): Empty =
+            handleRPC {
+                // Called when a player changes instances on the same backend server.
+                playerInstances[UUID.fromString(request.uuid)] = request.instanceId
+                playerServers[UUID.fromString(request.uuid)] = request.serverName
+                logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
+                app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {
+                    addProperty("instance", request.instanceId)
+                    addProperty("serverName", request.serverName)
+                })
+                return Empty.getDefaultInstance()
+            }
 
-        override suspend fun playerTransfer(request: PlayerTrackerOuterClass.PlayerTransferRequest): Empty {
+        override suspend fun playerTransfer(request: PlayerTrackerOuterClass.PlayerTransferRequest): Empty = handleRPC {
             // Called when a player changes backend servers (including initial routing).
             playerInstances[UUID.fromString(request.uuid)] = request.newInstance
             playerServers[UUID.fromString(request.uuid)] = request.newServerName
@@ -122,34 +124,35 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun queryPlayer(request: PlayerTrackerOuterClass.PlayerQueryRequest): PlayerTrackerOuterClass.QueryPlayerResponse {
-            when (request.identityCase) {
-                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.USERNAME -> {
-                    return queryPlayerResponse {
-                        username = request.username
-                        val foundUuid = runBlocking { app.get(DatabaseConnection::class).getPlayerUUID(username) }
-                        foundUuid?.let {
-                            uuid = it.toString()
-                            isOnline = playerInstances.containsKey(it)
+        override suspend fun queryPlayer(request: PlayerTrackerOuterClass.PlayerQueryRequest): PlayerTrackerOuterClass.QueryPlayerResponse =
+            handleRPC {
+                when (request.identityCase) {
+                    PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.USERNAME -> {
+                        return queryPlayerResponse {
+                            username = request.username
+                            val foundUuid = runBlocking { app.get(DatabaseConnection::class).getPlayerUUID(username) }
+                            foundUuid?.let {
+                                uuid = it.toString()
+                                isOnline = playerInstances.containsKey(it)
+                            }
                         }
                     }
-                }
 
-                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.UUID -> {
-                    val uuidIn = UUID.fromString(request.uuid)
-                    return queryPlayerResponse {
-                        uuid = request.uuid
-                        isOnline = playerInstances.containsKey(uuidIn)
-                        val foundUsername = runBlocking { app.get(DatabaseConnection::class).getPlayerName(uuidIn) }
-                        foundUsername?.let {
-                            username = it
+                    PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.UUID -> {
+                        val uuidIn = UUID.fromString(request.uuid)
+                        return queryPlayerResponse {
+                            uuid = request.uuid
+                            isOnline = playerInstances.containsKey(uuidIn)
+                            val foundUsername = runBlocking { app.get(DatabaseConnection::class).getPlayerName(uuidIn) }
+                            foundUsername?.let {
+                                username = it
+                            }
                         }
                     }
-                }
 
-                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.IDENTITY_NOT_SET -> error("No identity given!")
-                null -> error("No identity given!")
+                    PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.IDENTITY_NOT_SET -> error("No identity given!")
+                    null -> error("No identity given!")
+                }
             }
-        }
     }
 }

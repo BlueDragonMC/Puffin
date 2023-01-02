@@ -76,26 +76,28 @@ class Queue(app: ServiceHolder) : Service(app) {
                     app.get(DatabaseConnection::class).getMapInfo(mapName) != null
         }
 
-        override suspend fun addToQueue(request: com.bluedragonmc.api.grpc.Queue.AddToQueueRequest): Empty {
+        override suspend fun addToQueue(request: com.bluedragonmc.api.grpc.Queue.AddToQueueRequest): Empty =
+            Utils.handleRPC {
 
-            val uuid = UUID.fromString(request.playerUuid)
+                val uuid = UUID.fromString(request.playerUuid)
 
-            if (request.gameType.hasMapName() && !isValidMap(request.gameType.name, request.gameType.mapName)) {
-                Utils.sendChat(
-                    uuid,
-                    "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>"
-                )
+                if (request.gameType.hasMapName() && !isValidMap(request.gameType.name, request.gameType.mapName)) {
+                    Utils.sendChat(
+                        uuid,
+                        "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>"
+                    )
+                    return Empty.getDefaultInstance()
+                }
+
+                queuePlayer(uuid, request.gameType)
+                Utils.sendChat(uuid, "<p1><lang:queue.added.game:'${request.gameType.name}'>")
+
                 return Empty.getDefaultInstance()
             }
 
-            queuePlayer(uuid, request.gameType)
-            Utils.sendChat(uuid, "<p1><lang:queue.added.game:'${request.gameType.name}'>")
-
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun removeFromQueue(request: com.bluedragonmc.api.grpc.Queue.RemoveFromQueueRequest): Empty {
-            return Empty.getDefaultInstance()
-        }
+        override suspend fun removeFromQueue(request: com.bluedragonmc.api.grpc.Queue.RemoveFromQueueRequest): Empty =
+            Utils.handleRPC {
+                return Empty.getDefaultInstance()
+            }
     }
 }

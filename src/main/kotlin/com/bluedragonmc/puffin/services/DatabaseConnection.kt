@@ -78,7 +78,9 @@ class DatabaseConnection(app: Puffin) : Service(app) {
 
     private fun evictCachesForPlayer(player: UUID) {
         val username = usernameCache.getIfPresent(player)
-        uuidCache.invalidate(username)
+        if (username != null) {
+            uuidCache.invalidate(username)
+        }
         usernameCache.invalidate(player)
         userColorCache.invalidate(player)
     }

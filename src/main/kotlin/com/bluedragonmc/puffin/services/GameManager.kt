@@ -7,6 +7,7 @@ import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
 import io.grpc.StatusException
@@ -264,59 +265,61 @@ class GameManager(app: Puffin) : Service(app) {
     }
 
     inner class ServerDiscoveryService : LobbyServiceGrpcKt.LobbyServiceCoroutineImplBase() {
-        override suspend fun findLobby(request: ServiceDiscovery.FindLobbyRequest): ServiceDiscovery.FindLobbyResponse {
+        override suspend fun findLobby(request: ServiceDiscovery.FindLobbyRequest): ServiceDiscovery.FindLobbyResponse =
+            handleRPC {
 
-            // Find any running instances with the "Lobby" game type.
-            val gs = getGameServers()
-            val lobbies = filterRunningGames(
-                gameType {
-                    name = "Lobby"
-                    selectors += GameTypeFieldSelector.GAME_NAME
-                }
-            ).keys.associateWith { getGameServerOf(it) }.filter { it.value != null }
+                // Find any running instances with the "Lobby" game type.
+                val gs = getGameServers()
+                val lobbies = filterRunningGames(
+                    gameType {
+                        name = "Lobby"
+                        selectors += GameTypeFieldSelector.GAME_NAME
+                    }
+                ).keys.associateWith { getGameServerOf(it) }.filter { it.value != null }
 
-            return findLobbyResponse {
-                found = false
-                for ((gameId, gameServer) in lobbies) {
-                    if (request.includeServerNamesCount > 0 && gameServer !in request.includeServerNamesList) continue
-                    if (request.excludeServerNamesCount > 0 && gameServer in request.excludeServerNamesList) continue
-                    val info = gs.find { it.name == gameServer } ?: continue
-                    found = true
-                    serverName = gameServer!!
-                    ip = info.address
-                    port = info.port ?: 25565
-                    instanceUuid = gameId
-                    break
+                return findLobbyResponse {
+                    found = false
+                    for ((gameId, gameServer) in lobbies) {
+                        if (request.includeServerNamesCount > 0 && gameServer !in request.includeServerNamesList) continue
+                        if (request.excludeServerNamesCount > 0 && gameServer in request.excludeServerNamesList) continue
+                        val info = gs.find { it.name == gameServer } ?: continue
+                        found = true
+                        serverName = gameServer!!
+                        ip = info.address
+                        port = info.port ?: 25565
+                        instanceUuid = gameId
+                        break
+                    }
                 }
             }
-        }
     }
 
     inner class InstanceService : InstanceServiceGrpcKt.InstanceServiceCoroutineImplBase() {
-        override suspend fun initGameServer(request: ServerTracking.InitGameServerRequest): Empty {
+        override suspend fun initGameServer(request: ServerTracking.InitGameServerRequest): Empty = handleRPC {
             // Called when a new game server starts up and sends a ping
             logger.info("New game server started and pinged: ${request.serverName}")
             gameServers[request.serverName] = mutableSetOf()
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun createInstance(request: ServerTracking.InstanceCreatedRequest): Empty {
+        override suspend fun createInstance(request: ServerTracking.InstanceCreatedRequest): Empty = handleRPC {
             // Called when an instance is created on a game server
             handleInstanceCreated(request, null)
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun removeInstance(request: ServerTracking.InstanceRemovedRequest): Empty {
+        override suspend fun removeInstance(request: ServerTracking.InstanceRemovedRequest): Empty = handleRPC {
             // Called when an instance is removed on a game server
             handleInstanceRemoved(request)
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun getTotalPlayerCount(request: ServerTracking.PlayerCountRequest): ServerTracking.PlayerCountResponse {
-            return playerCountResponse {
-                totalPlayers = app.get(PlayerTracker::class).getPlayerCount(request.filterGameTypeOrNull)
+        override suspend fun getTotalPlayerCount(request: ServerTracking.PlayerCountRequest): ServerTracking.PlayerCountResponse =
+            handleRPC {
+                return playerCountResponse {
+                    totalPlayers = app.get(PlayerTracker::class).getPlayerCount(request.filterGameTypeOrNull)
+                }
             }
-        }
     }
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest, gameState: GameState?) {
