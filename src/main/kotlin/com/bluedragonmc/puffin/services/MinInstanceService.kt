@@ -99,11 +99,21 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
         } ?: return
         recentlyStarted.put(gameType, Unit)
 
-        logger.info("Starting new instance for game type ${gameType.name}/${gameType.mapName}...")
+        val minLoad = im.findGameServerWithLeastInstances() ?: return
+        // Prefer to cluster games of the same type on the same server
+        val servers = im.getGameServers()
+        val preferredServer = servers.filter { server ->
+            // Only consider servers which have up to 4 more instances than the least-utilized server.
+            im.getInstancesInServer(server.name).size < minLoad.value.size + 4
+        }.maxByOrNull { server ->
+            // Find the server with the most matching instances.
+            im.getInstancesInServer(server.name).count { gameId -> im.getGameType(gameId)?.name == gameType.name }
+        }?.name ?: minLoad.key
 
-        val gs = im.findGameServerWithLeastInstances()?.key ?: return
+        logger.info("Starting new instance for game type ${gameType.name}/${gameType.mapName}/${gameType.mode} on server '$preferredServer'...")
+
         runBlocking {
-            val response = Utils.getStubToServer(gs)?.createInstance(
+            val response = Utils.getStubToServer(preferredServer)?.createInstance(
                 GsClient.CreateInstanceRequest.newBuilder()
                     .setGameType(gameType)
                     .build()
