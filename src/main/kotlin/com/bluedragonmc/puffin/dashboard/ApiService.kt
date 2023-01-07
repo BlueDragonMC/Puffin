@@ -124,7 +124,9 @@ class ApiService(app: ServiceHolder) : Service(app) {
 
     fun createJsonObjectForGameServer(gs: GameManager.GameServer): JsonObject {
         return JsonObject().apply {
-            add("raw", gs.`object`.raw)
+            if (gs is GameManager.AgonesGameServer) {
+                add("raw", gs.`object`.raw)
+            }
             addProperty("name", gs.name)
             addProperty("address", gs.address)
             addProperty("port", gs.port)

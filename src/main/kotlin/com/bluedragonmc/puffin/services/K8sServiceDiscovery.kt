@@ -1,6 +1,10 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
+import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
+import com.bluedragonmc.puffin.app.Env.DEFAULT_PROXY_IP
+import com.bluedragonmc.puffin.app.Env.DEV_MODE
+import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
 import io.grpc.ManagedChannelBuilder
@@ -17,10 +21,6 @@ import java.util.UUID
  */
 class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
 
-    companion object {
-        val NAMESPACE = System.getProperty("PUFFIN_K8S_NAMESPACE") ?: "default"
-    }
-
     private lateinit var api: CoreV1Api
 
     private val serverAddresses = Caffeine.newBuilder()
@@ -35,6 +35,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
         api = CoreV1Api()
 
         // Get players on all proxies and start tracking them when the app starts up
+        if (DEV_MODE) return
         val proxies = getProxies()
         proxies.items.forEach { pod ->
             val ip = pod.status?.podIP ?: return@forEach
@@ -49,15 +50,18 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
     }
 
     private fun getProxies(): V1PodList =
-        api.listNamespacedPod(NAMESPACE, null, null, null, null, "app=proxy", null, null, null, null, null)
+        api.listNamespacedPod(K8S_NAMESPACE, null, null, null, null, "app=proxy", null, null, null, null, null)
 
     /**
      * Gets the pod IP address of the proxy that the player is on (null if unknown)
      */
     fun getProxyIP(player: UUID): String? {
+        if (DEV_MODE) {
+            return DEFAULT_PROXY_IP
+        }
         val proxy = app.get(PlayerTracker::class).getProxyOfPlayer(player) ?: return null
         return serverAddresses.get(proxy) {
-            val pod = api.readNamespacedPod(proxy, NAMESPACE, null)
+            val pod = api.readNamespacedPod(proxy, K8S_NAMESPACE, null)
             pod.status?.podIP
         }
     }
@@ -68,8 +72,11 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
      * address, because it is only accessible from inside the cluster.
      */
     fun getGameServerIP(serverName: String): String? {
+        if (DEV_MODE) {
+            return DEFAULT_GS_IP
+        }
         return serverAddresses.get(serverName) {
-            val pod = api.readNamespacedPod(serverName, NAMESPACE, null)
+            val pod = api.readNamespacedPod(serverName, K8S_NAMESPACE, null)
             pod.status?.podIP
         }
     }

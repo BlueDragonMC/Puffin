@@ -2,10 +2,11 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.QueueServiceGrpcKt
-import com.bluedragonmc.puffin.config.ConfigService
+import com.bluedragonmc.puffin.app.Env.WORLDS_FOLDER
 import com.bluedragonmc.puffin.util.Utils
 import com.google.protobuf.Empty
 import kotlinx.coroutines.runBlocking
+import java.nio.file.Paths
 import java.util.*
 import kotlin.io.path.exists
 import kotlin.io.path.listDirectoryEntries
@@ -69,7 +70,7 @@ class Queue(app: ServiceHolder) : Service(app) {
     inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
 
         private fun isValidMap(game: String, mapName: String): Boolean {
-            val folder = app.get(ConfigService::class).getWorldsFolder().resolve(game)
+            val folder = Paths.get(WORLDS_FOLDER).resolve(game)
 
             return folder.exists() &&
                     folder.listDirectoryEntries().isNotEmpty() &&

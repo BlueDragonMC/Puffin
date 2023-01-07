@@ -4,6 +4,9 @@ import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.api.grpc.CommonTypes.GameState
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
+import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
+import com.bluedragonmc.puffin.app.Env.DEV_MODE
+import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils
@@ -46,6 +49,8 @@ class GameManager(app: Puffin) : Service(app) {
     private val gameTypes = mutableMapOf<String, GameType>()
 
     override fun initialize() {
+        if (DEV_MODE) return
+
         Puffin.IO.launch {
             while (true) {
                 reloadGameServers()
@@ -122,7 +127,7 @@ class GameManager(app: Puffin) : Service(app) {
     }
 
     private fun processServerRemoved(`object`: DynamicKubernetesObject) {
-        val gs = GameServer(`object`)
+        val gs = AgonesGameServer(`object`)
         logger.info("GameServer ${gs.name} was removed.")
         val instances = gameServers[gs.name] ?: emptySet()
         gameServers.remove(gs.name)
@@ -132,7 +137,7 @@ class GameManager(app: Puffin) : Service(app) {
     }
 
     private fun processServerAdded(`object`: DynamicKubernetesObject) {
-        val gs = GameServer(`object`)
+        val gs = AgonesGameServer(`object`)
         logger.info("New GameServer found: ${gs.name} (${gs.address}:${gs.port})")
         gameServers.putIfAbsent(gs.name, mutableSetOf())
 
@@ -169,9 +174,10 @@ class GameManager(app: Puffin) : Service(app) {
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {
+            if (DEV_MODE) return
 
             try {
-                defaultApi.readNamespacedPod(serverName, K8sServiceDiscovery.NAMESPACE, null)
+                defaultApi.readNamespacedPod(serverName, K8S_NAMESPACE, null)
             } catch (e: ApiException) {
                 // If there was an error looking up the pod, it likely no longer exists.
                 // This means there was some sort of desync between our watch and the reality in the cluster.
@@ -248,20 +254,41 @@ class GameManager(app: Puffin) : Service(app) {
     /**
      * Makes a defensive copy of the list of servers just in case it is changed while iterating.
      */
-    fun getGameServers() = synchronized(lock) { ArrayList(kubernetesObjects) }.map { GameServer(it) }
+    fun getGameServers(): List<GameServer> {
+        if (DEV_MODE) {
+            if (gameServers.isNotEmpty()) {
+                return listOf(StaticGameServer(DEFAULT_GS_IP, gameServers.entries.first().key, 25565))
+            } else {
+                return listOf(StaticGameServer(DEFAULT_GS_IP, "dev-server", 25565))
+            }
+        }
+        return synchronized(lock) { ArrayList(kubernetesObjects) }.map { AgonesGameServer(it) }
+    }
 
-    data class GameServer(val `object`: DynamicKubernetesObject) {
+    interface GameServer {
+        val address: String
+        val name: String
+        val port: Int?
+    }
+
+    private data class StaticGameServer(
+        override val address: String,
+        override val name: String,
+        override val port: Int?
+    ) : GameServer
+
+    data class AgonesGameServer(val `object`: DynamicKubernetesObject): GameServer {
         private val status = `object`.raw.getAsJsonObject("status")
 
-        val address: String by lazy {
+        override val address: String by lazy {
             return@lazy status.get("address").asString
         }
-        val port by lazy {
+        override val port by lazy {
             if (status.has("ports") && status.get("ports").isJsonArray) status.get("ports").asJsonArray.first { p ->
                 p.asJsonObject.get("name").asString == "minecraft"
             }.asJsonObject.get("port").asInt else null
         }
-        val name = `object`.metadata.name!!
+        override val name = `object`.metadata.name!!
     }
 
     inner class ServerDiscoveryService : LobbyServiceGrpcKt.LobbyServiceCoroutineImplBase() {

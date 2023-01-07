@@ -1,7 +1,9 @@
 package com.bluedragonmc.puffin.services
 
+import com.bluedragonmc.puffin.app.Env.LUCKPERMS_API_URL
+import com.bluedragonmc.puffin.app.Env.MONGO_HOSTNAME
+import com.bluedragonmc.puffin.app.Env.MONGO_PORT
 import com.bluedragonmc.puffin.app.Puffin
-import com.bluedragonmc.puffin.config.ConfigService
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
@@ -48,9 +50,8 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     private val mapDataCache: Cache<String, Document> = builder.build()
 
     fun getPlayerNameColor(uuid: UUID): String = userColorCache.get(uuid) {
-        val baseUrl = app.get(ConfigService::class).config.luckPermsApiUrl
         val request = Request.Builder()
-            .url("$baseUrl/user/$uuid/meta")
+            .url("$LUCKPERMS_API_URL/user/$uuid/meta")
             .get()
             .build()
         val reply = gson.fromJson(httpClient.newCall(request).execute().body?.toString(), JsonObject::class.java)
@@ -86,9 +87,8 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     }
 
     private fun onConnected() {
-        val config = app.get(ConfigService::class).config
         mongoClient = KMongo.createClient(MongoClientSettings.builder()
-            .applyConnectionString(ConnectionString("mongodb://${config.mongoHostname}:${config.mongoPort}"))
+            .applyConnectionString(ConnectionString("mongodb://$MONGO_HOSTNAME:$MONGO_PORT"))
             .applyToSocketSettings { block ->
                 block.connectTimeout(5, TimeUnit.SECONDS)
             }.applyToClusterSettings { block ->
@@ -103,7 +103,6 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     }
 
     override fun initialize() {
-        val config = app.get(ConfigService::class).config
         this.httpClient = OkHttpClient.Builder()
             .cache(okhttp3.Cache(File("/tmp/okhttp"), 50_000_000))
             .addNetworkInterceptor { chain ->
@@ -117,11 +116,11 @@ class DatabaseConnection(app: Puffin) : Service(app) {
             try {
                 // Check if MongoDB is ready for requests
                 Socket(
-                    config.mongoHostname,
-                    config.mongoPort
+                    MONGO_HOSTNAME,
+                    MONGO_PORT
                 ).close() // Check if the port is open first; this is faster and doesn't require the creation of a whole client
                 KMongo.createClient(MongoClientSettings.builder()
-                    .applyConnectionString(ConnectionString("mongodb://${config.mongoHostname}:${config.mongoPort}"))
+                    .applyConnectionString(ConnectionString("mongodb://$MONGO_HOSTNAME:$MONGO_PORT"))
                     .applyToSocketSettings { settings ->
                         settings.connectTimeout(2, TimeUnit.SECONDS)
                         settings.readTimeout(2, TimeUnit.SECONDS)
