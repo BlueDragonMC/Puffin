@@ -26,16 +26,16 @@ dependencies {
     implementation("ch.qos.logback:logback:0.5")
     implementation("ch.qos.logback:logback-classic:1.4.5")
 
-    implementation("io.kubernetes:client-java:16.0.2")
+    implementation("io.kubernetes:client-java:17.0.0")
 
-    implementation("org.litote.kmongo:kmongo:4.7.2")
-    implementation("org.litote.kmongo:kmongo-coroutine:4.7.2")
+    implementation("org.litote.kmongo:kmongo:4.8.0")
+    implementation("org.litote.kmongo:kmongo-coroutine:4.8.0")
 
-    implementation("com.github.ben-manes.caffeine:caffeine:3.1.1")
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.2")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.1")
 
-    implementation("com.github.bluedragonmc:rpc:c2785493d9")
+    implementation("com.github.bluedragonmc:rpc:3c2e12a1d8")
 
     implementation("io.grpc:grpc-services:$grpcVersion")
     implementation("io.grpc:grpc-netty:$grpcVersion")

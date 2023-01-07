@@ -1,12 +1,17 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
+import com.bluedragonmc.api.grpc.Queue
+import com.bluedragonmc.api.grpc.Queue.GetDestinationRequest
+import com.bluedragonmc.api.grpc.Queue.GetDestinationResponse
 import com.bluedragonmc.api.grpc.QueueServiceGrpcKt
 import com.bluedragonmc.puffin.app.Env.WORLDS_FOLDER
 import com.bluedragonmc.puffin.util.Utils
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Paths
+import java.time.Duration
 import java.util.*
 import kotlin.io.path.exists
 import kotlin.io.path.listDirectoryEntries
@@ -67,6 +72,14 @@ class Queue(app: ServiceHolder) : Service(app) {
         return true
     }
 
+    private val destinationCache = Caffeine.newBuilder()
+        .expireAfterWrite(Duration.ofSeconds(10))
+        .build<UUID, String>()
+
+    fun setDestination(player: UUID, gameId: String) {
+        destinationCache.put(player, gameId)
+    }
+
     inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
 
         private fun isValidMap(game: String, mapName: String): Boolean {
@@ -77,7 +90,7 @@ class Queue(app: ServiceHolder) : Service(app) {
                     app.get(DatabaseConnection::class).getMapInfo(mapName) != null
         }
 
-        override suspend fun addToQueue(request: com.bluedragonmc.api.grpc.Queue.AddToQueueRequest): Empty =
+        override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty =
             Utils.handleRPC {
 
                 val uuid = UUID.fromString(request.playerUuid)
@@ -96,9 +109,21 @@ class Queue(app: ServiceHolder) : Service(app) {
                 return Empty.getDefaultInstance()
             }
 
-        override suspend fun removeFromQueue(request: com.bluedragonmc.api.grpc.Queue.RemoveFromQueueRequest): Empty =
+        override suspend fun removeFromQueue(request: Queue.RemoveFromQueueRequest): Empty =
             Utils.handleRPC {
                 return Empty.getDefaultInstance()
             }
+
+        override suspend fun getDestinationGame(request: GetDestinationRequest): GetDestinationResponse = Utils.handleRPC {
+            val player = UUID.fromString(request.playerUuid)
+            val destination = destinationCache.getIfPresent(player)
+            return if (destination != null) {
+                GetDestinationResponse.newBuilder()
+                    .setGameId(destination)
+                    .build()
+            } else {
+                GetDestinationResponse.getDefaultInstance()
+            }
+        }
     }
 }

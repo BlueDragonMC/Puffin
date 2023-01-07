@@ -7,6 +7,7 @@ import com.bluedragonmc.api.grpc.sendChatRequest
 import com.bluedragonmc.api.grpc.sendPlayerRequest
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.services.*
+import com.bluedragonmc.puffin.services.Queue
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import io.grpc.ManagedChannel
@@ -123,6 +124,7 @@ object Utils {
         val serverName = im.getGameServerOf(gameId)
 
         val channel = if (currentGameServer != serverName) {
+            app.get(Queue::class).setDestination(player, gameId)
             getChannelToProxyOf(player) // Send to the proxy if we're routing the player between game servers
         } else {
             getChannelToPlayer(player) // Send directly to the game server if we're routing the player between instances on the same server
