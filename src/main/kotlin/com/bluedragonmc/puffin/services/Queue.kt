@@ -74,7 +74,6 @@ class Queue(app: ServiceHolder) : Service(app) {
 
     private val destinationCache = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofSeconds(10))
-        .expireAfterAccess(Duration.ofMillis(500))
         .build<UUID, String>()
 
     fun setDestination(player: UUID, gameId: String) {
@@ -119,6 +118,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             val player = UUID.fromString(request.playerUuid)
             val destination = destinationCache.getIfPresent(player)
             return if (destination != null) {
+                destinationCache.invalidate(player)
                 GetDestinationResponse.newBuilder()
                     .setGameId(destination)
                     .build()

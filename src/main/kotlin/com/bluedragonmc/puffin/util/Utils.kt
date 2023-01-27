@@ -124,6 +124,7 @@ object Utils {
         val serverName = im.getGameServerOf(gameId)
 
         val channel = if (currentGameServer != serverName) {
+            logger.info("Setting destination of player '$player' to game '$gameId'")
             app.get(Queue::class).setDestination(player, gameId)
             getChannelToProxyOf(player) // Send to the proxy if we're routing the player between game servers
         } else {
