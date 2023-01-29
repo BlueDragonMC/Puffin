@@ -3,6 +3,7 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.api.grpc.GsClient
+import com.bluedragonmc.api.grpc.ServerTracking
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import kotlinx.coroutines.runBlocking
@@ -62,12 +63,7 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
 
     private val types = getAvailableGameTypes()
 
-    private fun isSufficient(gameType: GameType): Boolean {
-        val joinableInstances = app.get(GameManager::class)
-            .getJoinableInstances(gameType) // The amount of instances which players can join
-        val totalInstances =
-            app.get(GameManager::class).filterRunningGames(gameType).size // The current amount of instances
-
+    private fun wouldBeSufficientWith(gameType: GameType, joinableInstances: Int, totalInstances: Int): Boolean {
         val value = properties.getProperty(gameType.name + "_" + gameType.mapName + "_" + gameType.mode)
             ?: properties.getProperty(gameType.name + "_" + gameType.mapName)
             ?: return true
@@ -90,6 +86,15 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
                 totalInstances >= term.toInt()
             }
         }
+    }
+
+    private fun isSufficient(gameType: GameType): Boolean {
+        val joinableInstances = app.get(GameManager::class)
+            .getJoinableInstances(gameType) // The amount of instances which players can join
+        val totalInstances =
+            app.get(GameManager::class).filterRunningGames(gameType).size // The current amount of instances
+
+        return wouldBeSufficientWith(gameType, joinableInstances, totalInstances)
     }
 
     private fun ensureMinimumInstances() {
@@ -126,5 +131,27 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
 
     fun getGameTypes(): List<GameType> {
         return types
+    }
+
+    /**
+     * Uses the current state to determine whether a game should be removed.
+     * If the game can be removed and there will still be a sufficient amount
+     * of instances for the given game type, the removal is allowed.
+     */
+    fun shouldRemoveInstance(request: ServerTracking.InstanceRemovedRequest): Boolean {
+        val gameId = request.instanceUuid
+        val gameType = app.get(GameManager::class).getGameType(gameId) ?: return true
+        val joinable = app.get(GameStateManager::class).getEmptySlots(gameId) > 0
+
+        val joinableInstances = app.get(GameManager::class)
+            .getJoinableInstances(gameType) // The amount of instances which players can join
+        val totalInstances =
+            app.get(GameManager::class).filterRunningGames(gameType).size // The current amount of instances
+
+        return wouldBeSufficientWith(
+            gameType,
+            if (joinable) joinableInstances - 1 else joinableInstances,
+            totalInstances - 1
+        )
     }
 }

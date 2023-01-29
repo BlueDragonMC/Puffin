@@ -347,6 +347,12 @@ class GameManager(app: Puffin) : Service(app) {
                     totalPlayers = app.get(PlayerTracker::class).getPlayerCount(request.filterGameTypeOrNull)
                 }
             }
+
+        override suspend fun checkRemoveInstance(request: ServerTracking.InstanceRemovedRequest): ServerTracking.CheckRemoveInstanceResponse = handleRPC {
+            return checkRemoveInstanceResponse {
+                shouldRemove = app.get(MinInstanceService::class).shouldRemoveInstance(request)
+            }
+        }
     }
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest, gameState: GameState?) {
