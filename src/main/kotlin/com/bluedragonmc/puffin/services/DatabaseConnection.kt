@@ -47,7 +47,6 @@ class DatabaseConnection(app: Puffin) : Service(app) {
     private val uuidCache: Cache<String, UUID> = builder.build()
     private val usernameCache: Cache<UUID, String> = builder.build()
     private val userColorCache: Cache<UUID, String> = builder.build()
-    private val mapDataCache: Cache<String, Document> = builder.build()
 
     fun getPlayerNameColor(uuid: UUID): String = userColorCache.get(uuid) {
         val request = Request.Builder()
@@ -68,12 +67,6 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         runBlocking {
             playersCollection.findOne(Filters.eq("usernameLower", username))?.getString("_id")
                 ?.let { UUID.fromString(it) }
-        }
-    }
-
-    fun getMapInfo(mapName: String) = mapDataCache.get(mapName) {
-        runBlocking {
-            mapsCollection.findOneById(mapName)
         }
     }
 

@@ -14,7 +14,6 @@ import java.nio.file.Paths
 import java.time.Duration
 import java.util.*
 import kotlin.io.path.exists
-import kotlin.io.path.listDirectoryEntries
 
 class Queue(app: ServiceHolder) : Service(app) {
 
@@ -83,11 +82,7 @@ class Queue(app: ServiceHolder) : Service(app) {
     inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
 
         private fun isValidMap(game: String, mapName: String): Boolean {
-            val folder = Paths.get(WORLDS_FOLDER).resolve(game)
-
-            return folder.exists() &&
-                    folder.listDirectoryEntries().isNotEmpty() &&
-                    app.get(DatabaseConnection::class).getMapInfo(mapName) != null
+            return Paths.get(WORLDS_FOLDER).resolve(game).resolve(mapName).exists()
         }
 
         override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty =
