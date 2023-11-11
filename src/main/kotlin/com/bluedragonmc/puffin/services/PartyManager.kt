@@ -10,6 +10,9 @@ import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.protobuf.Empty
 import java.util.*
 
+/**
+ * Handles creating parties, party chat, invitations, warps, and transfers.
+ */
 class PartyManager(app: ServiceHolder) : Service(app) {
 
     private val parties = mutableSetOf<Party>()

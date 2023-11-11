@@ -28,6 +28,9 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
 
+/**
+ * Connects to MongoDB to fetch player names, UUIDs, colors, etc. Caches responses in memory.
+ */
 class DatabaseConnection(app: Puffin) : Service(app) {
 
     private lateinit var mongoClient: CoroutineClient
@@ -137,6 +140,9 @@ class DatabaseConnection(app: Puffin) : Service(app) {
 
         usernameCache.invalidateAll()
         usernameCache.cleanUp()
+
+        userColorCache.invalidateAll()
+        userColorCache.cleanUp()
 
         uuidCache.invalidateAll()
         uuidCache.cleanUp()

@@ -9,6 +9,9 @@ import com.google.protobuf.Empty
 import java.time.Duration
 import java.util.UUID
 
+/**
+ * Sends private messages (i.e. /msg) to players on other servers
+ */
 class PrivateMessageService(app: ServiceHolder) : Service(app) {
 
     /**

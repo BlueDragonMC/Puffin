@@ -9,6 +9,9 @@ import kotlinx.coroutines.runBlocking
 import java.util.*
 import java.util.function.Consumer
 
+/**
+ * Maintains lists that map each player to the game, server, and proxy they're currently in.
+ */
 class PlayerTracker(app: ServiceHolder) : Service(app) {
 
     /**

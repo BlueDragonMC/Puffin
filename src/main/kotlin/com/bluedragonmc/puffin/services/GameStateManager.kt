@@ -8,6 +8,10 @@ import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.protobuf.Empty
 
+/**
+ * Receives messages from game servers to update the states of the servers' games.
+ * Stores the states in a map for other services to access.
+ */
 class GameStateManager(app: Puffin) : Service(app) {
 
     private val emptyPlayerSlots = mutableMapOf<String, Int>()

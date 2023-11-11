@@ -1,60 +1,72 @@
 # Puffin
+
 **Puffin** is BlueDragon's container orchestration service and queue system.
 It runs in a Docker container with access to the external Docker runtime to create new containers.
 
 ## Usage
+
 - Clone: `git clone https://github.com/BlueDragonMC/Puffin.git`
 - Configure: see guide below
 - Build: `./gradlew build`
 - Run: `java -jar build/libs/Puffin-x.x.x-all.jar`
 
-## Configuration
-Puffin is configured using two files: `assets/puffin.json` and `assets/secrets.json`.
+## Internals
 
-`secrets.json`:
-* `githubToken`: (String) A GitHub personal access token for downloading private repos
-* `velocitySecret`: (String) A long, random string of text used for Velocity modern forwarding
+### Services
 
-`puffin.json`:
-* `worldsFolder`: (String) The complete, absolute path to the parent directory of all worlds. Used for checking validity of map names.
-* `puffinNetworkName`: (String) The name of Puffin's internal Docker bridge network
-* `dockerHostname`: (String) The URL used to connect to the Docker Engine API. Supports both HTTP and UNIX protocols.
-* `mongoHostname`: (String) The hostname of a MongoDB instance
-* `mongoPort`: (Int) The port number of the MongoDB instance
-* `amqpHostname`: (String) The hostname of a RabbitMQ instance
-* `amqpPort`: (Int) The port number of the RabbitMQ instance
-* `pruneTime`: (String) Stopped containers created before this time are pruned. Example strings: `6h` (6 hours), `30m` (30 minutes), `1h30m` (1.5 hours). See the [Docker documentation](https://docs.docker.com/engine/reference/commandline/container_prune/#filtering) for more valid formats. Set to `"-1"` to disable.
-* `versions`: (Object) These versions are updated automatically, so manual configuration is typically not necessary.
-  * `latestVersions`: (Object)
-    * Key: Repository name (i.e. `bluedragonmc/server`)
-    * Value: Latest Git commit hash of the repo for which a Docker image exists on the machine
-* `containers`: (Array)
-  * *Each container can have the following properties:*
-  * `type`: (String) One of: `docker_hub`, `github`
-  * `minimum`: (Int) The minimum number of containers of this type that must be running
-  * `priority`: (Int) The priority of the container. Containers with higher priorities are created first. Containers of the same priority are created at the same time.
-  * `networks`: (String Array) List of Docker networks to connect the container to
-  * `exposedPorts`: (String Array) Ports for the container to expose in the format: `<port>/<protocol>`, where `<protocol>` is either `tcp` or `udp` and `port` is a number from 0-65535.
-  * `portBindings`: (String Array) Ports that will be bound to the host machine, in the format: `<ip>:<hostPort>:<containerPort>`, where `ip` is the IP address to bind on the host machine, `hostPort` is the port to bind on the host machine, and `containerPort` is an exposed port as described above.
-  * `mounts`: (Array)
-    * *Each mount can have the following properties:*
-    * `type`: (String) One of: `BIND`, `VOLUME`, `TMPFS`, `NPIPE`
-    * `target`: (String) The absolute path on the container
-    * `source`: (String) The absolute path on the host machine
-    * `readOnly`: (Boolean) Whether the container can write to the mounted files or not
-    * `env`: (Object)
-      * Key: Environment variable name (should be all uppercase)
-      * Value: Environment variable value
-    * `labels`: (Object) A set of labels to be added to the container when it is created.
-      * Key: Label name (should be namespaced, like `com.bluedragonmc.puffin.container_id`)
-      * Value: Label value
-    * `containerUser`: (String) The name of the user that the container runs as. This typically can be left to the default, which does not change the user.
-  * *When the `type` is set to `github`, the following properties can be used:*
-      * `user`: (String) The name of the GitHub user or organization
-      * `repoName`: (String) The name of the GitHub repository
-      * `branch`: (String) The name of the repository's default branch to update
-      * `updateInterval`: (Long) The amount of milliseconds to wait in between checking for repository updates. Set to a non-positive value to disable.
-  * *When the `type` is set to `docker_hub`, the following properties can be used:*
-    * `user`: (String) The name of the Docker Hub user
-    * `image`: (String) The name of the Docker image owned by the specified `user`.
-    * `tag`: (String) The version of the image on Docker Hub, like `"9.0.5-ubuntu"`.
+Puffin is composed of many different services:
+
+| Service Name          | Description                                                                                                                              |
+|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| DatabaseConnection    | Connects to MongoDB to fetch player names, UUIDs, colors, etc. Caches responses in memory.                                               |
+| GameManager           | Fetches and maintains a list of game servers using the Kubernetes API                                                                    |
+| GameStateManager      | Receives messages from game servers to update the states of the servers' games. Stores the states in a map for other services to access. |
+| K8sServiceDiscovery   | Uses the Kubernetes API to maintain a set of proxy and game server IP addresses accessible within the cluster.                           |
+| MinInstanceService    | Ensures that the network meets a minimum amount of joinable instances for each game. Starts new instances when necessary.                |
+| PartyManager          | Handles creating parties, party chat, invitations, warps, and transfers.                                                                 |
+| PlayerTracker         | Maintains lists that map each player to the game, server, and proxy they're currently in.                                                |
+| PrivateMessageService | Sends private messages (i.e. /msg) to players on other servers.                                                                          |
+| Queue                 | Receives add-to-queue requests and sends the player to the game that's soonest to start.                                                 |
+
+## Events
+
+This is not an exhaustive list.
+
+### Initialization
+
+When Puffin starts up, it needs to sync up its state with the rest of the cluster. This involves:
+
+| Service             | Action                                                                |
+|---------------------|-----------------------------------------------------------------------|
+| GameManager         | Listing `GameServer` Kubernetes objects                               |
+| K8sServiceDiscovery | Listing proxies in the cluster and getting player lists from each one |
+
+### When a player logs in to a proxy
+
+| Service       | Action                                    |
+|---------------|-------------------------------------------|
+| PlayerTracker | Records the player's current proxy server |
+
+### When a player switches games
+
+| Service       | Action                                           |
+|---------------|--------------------------------------------------|
+| PlayerTracker | Updates the player's current server and instance |
+
+### When a player logs out of a proxy
+
+| Service            | Action                                                                                          |
+|--------------------|-------------------------------------------------------------------------------------------------|
+| PlayerTracker      | Clears the player's current proxy, game server, and instance                                    |
+| PartyManager       | Removes the player from their party. If the leader left, transfers the party to a party member. |
+| DatabaseConnection | Evicts any cached information from MongoDB for the player                                       |
+
+### Periodic Syncs
+
+Watching resources allows Puffin to be aware of actions happening in real-time, but this does introduce desync issues.
+Puffin attempts to combat this by periodically syncing information in the following services:
+
+| Service            | Rate                    | Task                                                         |
+|--------------------|-------------------------|--------------------------------------------------------------|
+| GameManager        | When desync is detected | Fetches list of game servers and their ready states.         |
+| MinInstanceService | Every 5 seconds         | Ensures the network meets our minimum instance requirements. |

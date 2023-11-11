@@ -24,6 +24,9 @@ import kotlinx.coroutines.launch
 import java.time.Duration
 import java.util.*
 
+/**
+ * Fetches and maintains a list of game servers using the Kubernetes API
+ */
 class GameManager(app: Puffin) : Service(app) {
 
     private val lock = Any()

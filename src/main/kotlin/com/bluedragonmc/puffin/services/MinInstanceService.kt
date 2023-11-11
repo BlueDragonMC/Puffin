@@ -13,7 +13,7 @@ import java.util.*
 import kotlin.io.path.inputStream
 
 /**
- * Requires a minimum number of joinable instances for each game type.
+ * Ensures that the network meets a minimum amount of joinable instances for each game. Starts new instances when necessary.
  */
 class MinInstanceService(app: ServiceHolder) : Service(app) {
 

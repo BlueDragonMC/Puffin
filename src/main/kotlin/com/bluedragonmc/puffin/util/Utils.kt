@@ -152,6 +152,9 @@ object Utils {
         })
     }
 
+    /**
+     * @param period The period, in milliseconds
+     */
     inline fun catchingTimer(
         name: String? = null,
         daemon: Boolean = false,

@@ -17,7 +17,7 @@ import java.time.Duration
 import java.util.UUID
 
 /**
- * Uses the Kubernetes API to list proxies and their IP cluster addresses
+ * Uses the Kubernetes API to list proxies and their cluster IP addresses
  */
 class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
 
