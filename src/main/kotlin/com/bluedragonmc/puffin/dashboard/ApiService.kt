@@ -151,7 +151,7 @@ class ApiService(app: ServiceHolder) : Service(app) {
             add("gameState", JsonObject().apply {
                 addProperty("joinable", state?.joinable)
                 addProperty("openSlots", state?.openSlots)
-                addProperty("playerCount", playerTracker.getPlayerCountOfInstance(gameId))
+                addProperty("playerCount", playerTracker.getPlayersInInstance(gameId).size)
                 addProperty("stateName", state?.gameState?.name)
             })
             val type = gameManager.getGameType(gameId)
