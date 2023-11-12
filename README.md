@@ -24,7 +24,7 @@ Puffin is composed of many different services:
 | K8sServiceDiscovery   | Uses the Kubernetes API to maintain a set of proxy and game server IP addresses accessible within the cluster.                           |
 | MinInstanceService    | Ensures that the network meets a minimum amount of joinable instances for each game. Starts new instances when necessary.                |
 | PartyManager          | Handles creating parties, party chat, invitations, warps, and transfers.                                                                 |
-| PlayerTracker         | Maintains lists that map each player to the game, server, and proxy they're currently in.                                                |
+| PlayerTracker         | Maintains a map of players' UUIDs to their current games, servers, and proxies.                                                          |
 | PrivateMessageService | Sends private messages (i.e. /msg) to players on other servers.                                                                          |
 | Queue                 | Receives add-to-queue requests and sends the player to the game that's soonest to start.                                                 |
 

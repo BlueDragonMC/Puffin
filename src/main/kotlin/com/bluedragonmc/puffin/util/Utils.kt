@@ -39,7 +39,7 @@ object Utils {
     private val logger = LoggerFactory.getLogger(this::class.java)
 
     fun getChannelToPlayer(player: UUID): ManagedChannel? {
-        val serverName = app.get(PlayerTracker::class).getServerOfPlayer(player) ?: run {
+        val serverName = app.get(PlayerTracker::class).getPlayer(player)?.gameServerName ?: run {
             logger.warn("Failed to get server name of player $player (Can't get gRPC channel to the player's server)")
             return null
         }
@@ -92,7 +92,7 @@ object Utils {
     }
 
     suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) {
-        logger.debug("Sending chat message (type $chatType) to player $player: '$message'")
+        logger.debug("Sending chat message (type {}) to player {}: '{}'", chatType, player, message)
         val stub = getStubToPlayer(player)
         stub?.sendChat(sendChatRequest {
             this.playerUuid = player.toString()
@@ -117,7 +117,7 @@ object Utils {
         }
 
     suspend fun sendPlayerToInstance(player: UUID, gameId: String) {
-        val currentGameServer = app.get(PlayerTracker::class).getServerOfPlayer(player)
+        val currentGameServer = app.get(PlayerTracker::class).getPlayer(player)?.gameServerName
 
         val im = app.get(GameManager::class)
         val servers = im.getGameServers()
@@ -129,7 +129,7 @@ object Utils {
             getChannelToProxyOf(player) // Send to the proxy if we're routing the player between game servers
         } else {
             getChannelToPlayer(player) // Send directly to the game server if we're routing the player between instances on the same server
-        }?: run {
+        } ?: run {
             logger.warn("Failed to initialize the correct channel to send player $player from $currentGameServer to $serverName/$gameId!")
             return
         }

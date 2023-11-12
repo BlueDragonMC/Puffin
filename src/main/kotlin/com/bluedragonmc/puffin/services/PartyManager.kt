@@ -57,7 +57,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 members.clear()
                 leader = UUID(0L, 0L)
                 svc.parties.remove(this)
-            } else if (svc.app.get(PlayerTracker::class).getInstanceOfPlayer(leader) == null) {
+            } else if (svc.app.get(PlayerTracker::class).getPlayer(leader) == null) {
                 // If the party leader left, transfer the party to one of the members
                 val member = members.first { it != leader }
                 Utils.sendChatAsync(
@@ -242,8 +242,9 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 return Empty.getDefaultInstance()
             }
             // Warp every member
+            val leaderGameId = tracker.getPlayer(party.leader)?.gameId ?: return@handleRPC Empty.getDefaultInstance()
             val membersToWarp =
-                party.members.count { tracker.getInstanceOfPlayer(it) != tracker.getInstanceOfPlayer(party.leader) }
+                party.members.count { member -> tracker.getPlayer(member)?.gameId != leaderGameId }
             party.members.forEach {
                 if (party.leader != it) {
                     Utils.sendPlayerToInstance(it, gameId)

@@ -59,7 +59,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
         if (DEV_MODE) {
             return DEFAULT_PROXY_IP
         }
-        val proxy = app.get(PlayerTracker::class).getProxyOfPlayer(player) ?: return null
+        val proxy = app.get(PlayerTracker::class).getPlayer(player)?.proxyPodName ?: return null
         return serverAddresses.get(proxy) {
             val pod = api.readNamespacedPod(proxy, K8S_NAMESPACE, null)
             pod.status?.podIP
