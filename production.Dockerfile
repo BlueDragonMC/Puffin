@@ -11,6 +11,10 @@ RUN /usr/bin/gradle --console=plain --info --stacktrace --no-daemon build
 
 # Run the built JAR and expose port 25565
 FROM docker.io/library/eclipse-temurin:17-jre-alpine
+
+LABEL com.bluedragonmc.image=puffin
+LABEL com.bluedragonmc.environment=production
+
 EXPOSE 25565
 WORKDIR /puffin
 COPY --from=build /work/build/libs/Puffin-*-all.jar /service/puffin.jar

@@ -12,6 +12,10 @@ RUN --mount=target=/home/gradle/.gradle,type=cache \
 
 # Run the built JAR and expose port 25565
 FROM eclipse-temurin:17
+
+LABEL com.bluedragonmc.image=puffin
+LABEL com.bluedragonmc.environment=dev
+
 EXPOSE 25565
 WORKDIR /puffin
 COPY --from=build /work/build/libs/Puffin-*-all.jar /service/puffin.jar
