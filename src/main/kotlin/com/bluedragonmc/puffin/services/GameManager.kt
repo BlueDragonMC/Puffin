@@ -80,8 +80,9 @@ class GameManager(app: Puffin) : Service(app) {
 
     fun reloadGameServers() {
         val items = client.list().`object`.items
+        val previousK8sObjects = ArrayList(kubernetesObjects)
         items.forEach { server ->
-            if (kubernetesObjects.none { it.metadata.uid == server.metadata.uid }) {
+            if (previousK8sObjects.none { it.metadata.uid == server.metadata.uid }) {
                 // New server found!
                 logger.info("New GameServer found during manual sync: ${server.metadata.name}")
                 kubernetesObjects.add(server)
@@ -92,7 +93,7 @@ class GameManager(app: Puffin) : Service(app) {
                 }
             }
         }
-        ArrayList(kubernetesObjects).forEach { obj ->
+        previousK8sObjects.forEach { obj ->
             if (items.none { it.metadata.uid == obj.metadata.uid }) {
                 // A game server was removed during the sync!
                 logger.info("A GameServer was removed during manual sync: ${obj.metadata.name}")

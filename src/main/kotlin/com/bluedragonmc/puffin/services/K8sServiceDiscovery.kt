@@ -71,9 +71,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
                 playerTracker.updatePlayers(podName, response)
                 val newPlayerList = playerTracker.getPlayersOnProxy(podName)
 
-                if (existingPlayers.isEmpty()) {
-                    logger.info("Found ${response.playersCount} players on proxy $podName")
-                } else if (existingPlayers.size != newPlayerList.size) {
+                if (existingPlayers.size != newPlayerList.size) {
                     logger.info("Player count changed on proxy $podName: ${existingPlayers.size} -> ${newPlayerList.size}")
                 }
 
