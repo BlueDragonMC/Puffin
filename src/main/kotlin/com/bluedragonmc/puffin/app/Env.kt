@@ -14,4 +14,13 @@ object Env {
     val DEV_MODE = System.getenv("PUFFIN_DEV_MODE")?.toBoolean() ?: false
     val DEFAULT_GS_IP = System.getenv("PUFFIN_DEFAULT_GAMESERVER_IP") ?: "minecraft"
     val DEFAULT_PROXY_IP = System.getenv("PUFFIN_DEFAULT_PROXY_IP") ?: "velocity"
+
+    // The amount of milliseconds in between minimum instance checks
+    val INSTANCE_START_PERIOD = System.getenv("PUFFIN_INSTANCE_START_PERIOD_MS")?.toLongOrNull() ?: 5_000L
+
+    // The amount of milliseconds in between game server syncs
+    val GS_SYNC_PERIOD = System.getenv("PUFFIN_GS_SYNC_PERIOD_MS")?.toLongOrNull() ?: 10_000L
+
+    // The amount of milliseconds in between proxy syncs
+    val K8S_SYNC_PERIOD = System.getenv("PUFFIN_K8S_SYNC_PERIOD_MS")?.toLongOrNull() ?: 10_000L
 }

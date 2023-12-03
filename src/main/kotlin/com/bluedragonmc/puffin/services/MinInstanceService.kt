@@ -4,9 +4,11 @@ import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.api.grpc.ServerTracking
+import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import kotlinx.coroutines.runBlocking
+import java.io.IOException
 import java.nio.file.Paths
 import java.time.Duration
 import java.util.*
@@ -21,9 +23,13 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
         .expireAfterWrite(Duration.ofSeconds(15))
         .build<GameType, Unit>()
 
+    private val excludedServers = Caffeine.newBuilder()
+        .expireAfterWrite(Duration.ofSeconds(10))
+        .build<String, Unit>()
+
     override fun initialize() {
         logger.info("Found ${types.size} different game types: ${types.joinToString { "${it.name}/${it.mapName}" }}")
-        Utils.catchingTimer("Min Instance Req", true, 0L, 5_000L) {
+        Utils.catchingTimer("Min Instance Req", true, 0L, Env.INSTANCE_START_PERIOD) {
             ensureMinimumInstances()
         }
     }
@@ -108,23 +114,38 @@ class MinInstanceService(app: ServiceHolder) : Service(app) {
         // Prefer to cluster games of the same type on the same server
         val servers = im.getGameServers()
         val preferredServer = servers.filter { server ->
-            // Only consider servers which have up to 4 more instances than the least-utilized server.
-            im.getInstancesInServer(server.name).size < minLoad.value.size + 4
+            // Only consider non-excluded servers which have up to 4 more instances than the least-utilized server.
+            im.getInstancesInServer(server.name).size < minLoad.value.size + 4 && excludedServers.getIfPresent(server.name) == null
         }.maxByOrNull { server ->
             // Find the server with the most matching instances.
             im.getInstancesInServer(server.name).count { gameId -> im.getGameType(gameId)?.name == gameType.name }
-        }?.name ?: minLoad.key
+        }?.name ?: run {
+            if (excludedServers.getIfPresent(minLoad.key) != null) {
+                logger.warn("The only available server (${minLoad.key}) is temporarily excluded because of a previous error! Skipping instance creation.")
+                return@run null
+            }
+            minLoad.key
+        } ?: return
 
         logger.info("Starting new instance for game type ${gameType.name}/${gameType.mapName}/${gameType.mode} on server '$preferredServer'...")
 
         runBlocking {
-            val response = Utils.getStubToServer(preferredServer)?.createInstance(
-                GsClient.CreateInstanceRequest.newBuilder()
-                    .setGameType(gameType)
-                    .build()
-            )
-            if (response?.success == true) {
-                recentlyStarted.invalidate(gameType)
+            try {
+                val response = Utils.getStubToServer(preferredServer)?.createInstance(
+                    GsClient.CreateInstanceRequest.newBuilder()
+                        .setGameType(gameType)
+                        .build()
+                )
+                if (response?.success == true) {
+                    excludedServers.invalidate(preferredServer)
+                    recentlyStarted.invalidate(gameType)
+                }
+            } catch (e: Exception) {
+                excludedServers.put(preferredServer, Unit)
+                if (e is IOException) {
+                    // If there was an error sending a message to this server, it may have been removed.
+                    im.reloadGameServers()
+                }
             }
         }
     }

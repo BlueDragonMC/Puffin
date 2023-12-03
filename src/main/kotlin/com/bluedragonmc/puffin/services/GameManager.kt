@@ -4,12 +4,14 @@ import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.api.grpc.CommonTypes.GameState
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
+import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
@@ -62,9 +64,21 @@ class GameManager(app: Puffin) : Service(app) {
                 delay(5_000)
             }
         }
+
+        catchingTimer("GameManager Periodic Sync", daemon = true, initialDelay = 0L, period = Env.GS_SYNC_PERIOD) {
+
+            for ((serverName, _) in gameServers) {
+                Puffin.IO.launch {
+                    syncExistingServer(serverName)
+                }
+            }
+
+            // Sync game servers periodically just in case a change isn't picked up by the watcher
+            reloadGameServers()
+        }
     }
 
-    private fun reloadGameServers() {
+    fun reloadGameServers() {
         val items = client.list().`object`.items
         items.forEach { server ->
             if (kubernetesObjects.none { it.metadata.uid == server.metadata.uid }) {
@@ -134,6 +148,7 @@ class GameManager(app: Puffin) : Service(app) {
         logger.info("GameServer ${gs.name} was removed.")
         val instances = gameServers[gs.name] ?: emptySet()
         gameServers.remove(gs.name)
+        readyGameServers.remove(gs.name)
         gameTypes.entries.removeAll { it.key in instances }
         Utils.cleanupChannelsForServer(gs.name)
         app.get(ApiService::class).sendUpdate("gameServer", "remove", gs.name, null)
@@ -146,7 +161,7 @@ class GameManager(app: Puffin) : Service(app) {
 
         // Get all running instances on this newly-added server
         Puffin.IO.launch {
-            sync(gs.name)
+            syncNewServer(gs.name)
         }
         app.get(ApiService::class).sendUpdate(
             "gameServer", "add", gs.name,
@@ -154,7 +169,24 @@ class GameManager(app: Puffin) : Service(app) {
         )
     }
 
-    private suspend fun sync(serverName: String) {
+    private suspend fun syncExistingServer(serverName: String) {
+        val channel = Utils.getChannelToServer(serverName) ?: return
+        val playersResponse =
+            PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel).getPlayers(Empty.getDefaultInstance())
+        val instancesResponse =
+            GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
+
+        app.get(PlayerTracker::class).updatePlayers(playersResponse)
+
+        instancesResponse.instancesList.forEach { instance ->
+            if (!gameTypes.containsKey(instance.instanceUuid)) {
+                logger.warn("Updated game type information for previously-unknown instance ${instance.instanceUuid} (${instance.gameType})")
+                gameTypes[instance.instanceUuid] = instance.gameType
+            }
+        }
+    }
+
+    private suspend fun syncNewServer(serverName: String) {
         // Wait for the server's gRPC port to become available
         try {
             val channel = Utils.getChannelToServer(serverName) ?: return
@@ -201,7 +233,7 @@ class GameManager(app: Puffin) : Service(app) {
 
             logger.info("Failed to sync players and instances with server $serverName, retrying...")
             delay(5000)
-            sync(serverName)
+            syncNewServer(serverName)
         }
     }
 
@@ -277,10 +309,10 @@ class GameManager(app: Puffin) : Service(app) {
     private data class StaticGameServer(
         override val address: String,
         override val name: String,
-        override val port: Int?
+        override val port: Int?,
     ) : GameServer
 
-    data class AgonesGameServer(val `object`: DynamicKubernetesObject): GameServer {
+    data class AgonesGameServer(val `object`: DynamicKubernetesObject) : GameServer {
         private val status = `object`.raw.getAsJsonObject("status")
 
         override val address: String by lazy {
@@ -351,11 +383,12 @@ class GameManager(app: Puffin) : Service(app) {
                 }
             }
 
-        override suspend fun checkRemoveInstance(request: ServerTracking.InstanceRemovedRequest): ServerTracking.CheckRemoveInstanceResponse = handleRPC {
-            return checkRemoveInstanceResponse {
-                shouldRemove = app.get(MinInstanceService::class).shouldRemoveInstance(request)
+        override suspend fun checkRemoveInstance(request: ServerTracking.InstanceRemovedRequest): ServerTracking.CheckRemoveInstanceResponse =
+            handleRPC {
+                return checkRemoveInstanceResponse {
+                    shouldRemove = app.get(MinInstanceService::class).shouldRemoveInstance(request)
+                }
             }
-        }
     }
 
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest, gameState: GameState?) {

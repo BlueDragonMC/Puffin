@@ -66,7 +66,7 @@ When Puffin starts up, it needs to sync up its state with the rest of the cluste
 Watching resources allows Puffin to be aware of actions happening in real-time, but this does introduce desync issues.
 Puffin attempts to combat this by periodically syncing information in the following services:
 
-| Service            | Rate                    | Task                                                         |
-|--------------------|-------------------------|--------------------------------------------------------------|
-| GameManager        | When desync is detected | Fetches list of game servers and their ready states.         |
-| MinInstanceService | Every 5 seconds         | Ensures the network meets our minimum instance requirements. |
+| Service            | Rate                    | Task                                                                     |
+|--------------------|-------------------------|--------------------------------------------------------------------------|
+| GameManager        | When desync is detected | Fetches list of game servers, their ready states, and current instances. |
+| MinInstanceService | Every 5 seconds         | Ensures the network meets our minimum instance requirements.             |
