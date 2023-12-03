@@ -45,13 +45,14 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
         Utils.catchingTimer(
             "K8sServiceDiscovery Periodic Sync",
             daemon = true,
-            initialDelay = 0L,
+            initialDelay = Env.K8S_SYNC_PERIOD,
             period = Env.K8S_SYNC_PERIOD
         ) {
             periodicSync()
         }
     }
 
+    @Synchronized
     private fun periodicSync() {
         val playerTracker = app.get(PlayerTracker::class)
         val proxies = getProxies().items.mapNotNull { it.metadata?.name }

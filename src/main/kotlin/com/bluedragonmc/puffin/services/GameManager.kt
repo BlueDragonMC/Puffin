@@ -24,14 +24,12 @@ import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
-import java.util.*
 
 /**
  * Fetches and maintains a list of game servers using the Kubernetes API
  */
 class GameManager(app: Puffin) : Service(app) {
 
-    private val lock = Any()
     private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
 
     private val client = DynamicKubernetesApi("agones.dev", "v1", "gameservers", Config.defaultClient())
@@ -65,7 +63,12 @@ class GameManager(app: Puffin) : Service(app) {
             }
         }
 
-        catchingTimer("GameManager Periodic Sync", daemon = true, initialDelay = 0L, period = Env.GS_SYNC_PERIOD) {
+        catchingTimer(
+            "GameManager Periodic Sync",
+            daemon = true,
+            initialDelay = Env.GS_SYNC_PERIOD,
+            period = Env.GS_SYNC_PERIOD
+        ) {
 
             for ((serverName, _) in gameServers) {
                 Puffin.IO.launch {
@@ -78,6 +81,7 @@ class GameManager(app: Puffin) : Service(app) {
         }
     }
 
+    @Synchronized
     fun reloadGameServers() {
         val items = client.list().`object`.items
         val previousK8sObjects = ArrayList(kubernetesObjects)
@@ -184,6 +188,8 @@ class GameManager(app: Puffin) : Service(app) {
                 logger.warn("Updated game type information for previously-unknown instance ${instance.instanceUuid} (${instance.gameType})")
                 gameTypes[instance.instanceUuid] = instance.gameType
             }
+
+            app.get(GameStateManager::class).setGameState(instance.instanceUuid, instance.gameState)
         }
     }
 
@@ -298,7 +304,7 @@ class GameManager(app: Puffin) : Service(app) {
                 return listOf(StaticGameServer(DEFAULT_GS_IP, "dev-server", 25565))
             }
         }
-        return synchronized(lock) { ArrayList(kubernetesObjects) }.map { AgonesGameServer(it) }
+        return ArrayList(kubernetesObjects).map { AgonesGameServer(it) }
     }
 
     interface GameServer {

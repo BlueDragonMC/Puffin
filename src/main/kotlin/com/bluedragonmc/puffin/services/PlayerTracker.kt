@@ -23,7 +23,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     fun getPlayer(uuid: UUID) = players[uuid]
     fun getPlayersInInstance(gameId: String) = players.filter { (_, state) -> state.gameId == gameId }.map { it.key }
     fun getPlayersOnProxy(podName: String) =
-        players.filter { (_, state) -> state.proxyPodName === podName }.map { it.key }
+        players.filter { (_, state) -> state.proxyPodName == podName }.map { it.key }
     fun removePlayer(uuid: UUID) = players.remove(uuid)
 
     fun setProxy(player: UUID, proxyPodName: String?) {
