@@ -80,7 +80,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
                 // If so, this was a desync issue, and they should be removed.
                 val playersToRemove = mutableListOf<UUID>()
                 existingPlayers.forEach {
-                    if (response.playersList.none { listItem -> listItem.uuid === it.toString() }) {
+                    if (response.playersList.none { listItem -> listItem.uuid == it.toString() }) {
                         playersToRemove.add(it)
                     }
                 }
