@@ -56,7 +56,8 @@ class DatabaseConnection(app: Puffin) : Service(app) {
             .url("$LUCKPERMS_API_URL/user/$uuid/meta")
             .get()
             .build()
-        val reply = gson.fromJson(httpClient.newCall(request).execute().body?.toString(), JsonObject::class.java)
+        val responseBody = httpClient.newCall(request).execute().body?.string()
+        val reply = gson.fromJson(responseBody, JsonObject::class.java)
         reply.get("meta")?.asJsonObject?.get("rankcolor")?.asString ?: "#aaaaaa"
     }
 

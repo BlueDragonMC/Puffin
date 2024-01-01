@@ -102,7 +102,7 @@ object Utils {
     }
 
     suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT) {
-        logger.debug("Sending chat message (type {}) to player {}: '{}'", chatType, player, message)
+        logger.info("Sending chat message (type {}) to player {}: '{}'", chatType, player, message)
         val stub = getStubToPlayer(player)
         stub?.sendChat(sendChatRequest {
             this.playerUuid = player.toString()
@@ -188,6 +188,11 @@ object Utils {
             e.printStackTrace()
             throw e
         }
+    }
+
+    fun surroundWithSeparators(message: String): String {
+        val separator = "<white><strikethrough>=================================</strikethrough></white>"
+        return "${separator}\n${message}\n${separator}"
     }
 
     class UtilsService(app: ServiceHolder) : Service(app) {

@@ -35,34 +35,39 @@ class PartyManager(app: ServiceHolder) : Service(app) {
     private fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
         Utils.sendChatAsync(
             party.members,
-            "\n<p2><lang:puffin.party.invite.other:'${inviter.name}':'${invitee.name}'>"
+            Utils.surroundWithSeparators("<p2><lang:puffin.party.invite.other:'${inviter.name}':'${invitee.name}'>")
         )
         Utils.sendChatAsync(
             invitee,
-            "\n<p2><click:run_command:/party accept $inviter><lang:puffin.party.invite.1:'${inviter.name}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>\n"
+            Utils.surroundWithSeparators("<p2><click:run_command:/party accept $inviter><lang:puffin.party.invite.1:'${inviter.name}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>")
         )
     }
 
     data class Party(
         val svc: PartyManager,
+        /**
+         * The party's current members, including the leader
+         */
         val members: MutableList<UUID>,
         val invitations: MutableMap<UUID, Timer>,
         var leader: UUID,
     ) {
 
         fun update() {
+            println("inside Party#update() with leader: $leader; members: $members; invitations: $invitations")
             if (members.size <= 1 && invitations.isEmpty()) {
                 // If a party has no members and all invites expires, delete it
-                Utils.sendChatAsync(leader, "<red><lang:puffin.party.disband.auto>")
-                members.clear()
-                leader = UUID(0L, 0L)
+                Utils.sendChatAsync(members, "<red><lang:puffin.party.disband.auto>")
                 svc.parties.remove(this)
             } else if (svc.app.get(PlayerTracker::class).getPlayer(leader) == null) {
                 // If the party leader left, transfer the party to one of the members
                 val member = members.first { it != leader }
+                val leaderUsername = svc.getUsername(leader)
                 Utils.sendChatAsync(
                     members,
-                    "<yellow><lang:puffin.transfer.auto:'${svc.getUsername(member)}':'${svc.getUsername(leader)}'>"
+                    Utils.surroundWithSeparators(
+                        "<yellow><lang:puffin.transfer.auto:'${svc.getUsername(member)}':'$leaderUsername'>"
+                    )
                 )
                 leader = member
             }
@@ -73,9 +78,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
         app.get(PlayerTracker::class).onLogout { player ->
             val party = partyOf(player) ?: return@onLogout
             party.members.remove(player)
-            party.members.forEach {
-                Utils.sendChatAsync(it, "\n<red><lang:puffin.party.player_logged_out:'${player.name}'>\n")
-            }
+            Utils.sendChatAsync(
+                party.members,
+                Utils.surroundWithSeparators("<red><lang:puffin.party.player_logged_out:'${player.name}'>")
+            )
             party.update()
         }
     }
@@ -90,12 +96,15 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 return Empty.getDefaultInstance()
             }
             if (party.invitations.contains(player)) {
-                Utils.sendChat(party.members, "\n<p2><lang:puffin.party.join.other:'${player.name}'>")
+                Utils.sendChat(
+                    party.members,
+                    Utils.surroundWithSeparators("<p2><lang:puffin.party.join.other:'${player.name}'>")
+                )
                 party.members.add(player)
                 party.invitations.remove(player)
                 Utils.sendChat(
                     player,
-                    "\n<p2><lang:puffin.party.join.self:'${partyOwner.name}'>\n"
+                    Utils.surroundWithSeparators("<p2><lang:puffin.party.join.self:'${partyOwner.name}'>")
                 )
             } else {
                 Utils.sendChat(player, "<red><lang:puffin.party.join.no_invitation>")
@@ -111,6 +120,12 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 return Empty.getDefaultInstance()
             }
             val party = partyOf(partyOwner) ?: createParty(partyOwner)
+
+            if (party.members.contains(player)) {
+                Utils.sendChat(partyOwner, "<red><lang:puffin.party.invite.already_in_party>")
+                return Empty.getDefaultInstance()
+            }
+
             sendInvitationMessage(party, player, partyOwner)
             val timer = catchingTimer(daemon = true, initialDelay = 60_000, period = 60_000) {
                 this.cancel()
@@ -172,9 +187,9 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                         party.members.remove(player)
                         Utils.sendChat(
                             party.members,
-                            "\n<p2><lang:puffin.party.kick.success:'${player.name}'>\n"
+                            Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.success:'${player.name}'>")
                         )
-                        Utils.sendChat(player, "\n<p2><lang:puffin.party.kick.removed>\n")
+                        Utils.sendChat(player, Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.removed>"))
                         party.update()
                     } else {
                         Utils.sendChat(player, "<red><lang:puffin.party.member_not_found>")
@@ -183,6 +198,22 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                     Utils.sendChat(player, "<red><lang:puffin.party.not_found>")
                 }
             }
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun leaveParty(request: PartySvc.PartyLeaveRequest): Empty {
+            val player = UUID.fromString(request.playerUuid)
+            val party = partyOf(player)
+
+            if (party != null) {
+                party.members.remove(player)
+                Utils.sendChat(player, Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.self>"))
+                Utils.sendChat(party.members, Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.others:'${player.name}'>"))
+                party.update()
+            } else {
+                Utils.sendChat(player, "<red><lang:puffin.party.not_found>")
+            }
+
             return Empty.getDefaultInstance()
         }
 
@@ -207,7 +238,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             party.leader = newUuid
             Utils.sendChat(
                 party.members,
-                "\n<p2><lang:puffin.party.transfer.success:'${newUuid.name}'>\n"
+                Utils.surroundWithSeparators("<p2><lang:puffin.party.transfer.success:'${newUuid.name}'>")
             )
 
             return Empty.getDefaultInstance()
@@ -224,10 +255,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 return Empty.getDefaultInstance()
             }
             if (party.leader != uuid) {
-                Utils.sendChat(
-                    uuid,
-                    "<red><lang:puffin.party.transfer.not_leader>"
-                ) // todo make a new translation string for this
+                Utils.sendChat(uuid, "<red><lang:puffin.party.warp.not_leader>")
                 return Empty.getDefaultInstance()
             }
 
@@ -238,9 +266,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                     .count { party.members.contains(it) }
 
             if (party.members.size - 1 > emptySlots) {
-                Utils.sendChat(uuid, "\n<red><lang:puffin.party.warp.not_enough_space>\n")
+                Utils.sendChat(uuid, "<red><lang:puffin.party.warp.not_enough_space>")
                 return Empty.getDefaultInstance()
             }
+
             // Warp every member
             val leaderGameId = tracker.getPlayer(party.leader)?.gameId ?: return@handleRPC Empty.getDefaultInstance()
             val membersToWarp =
@@ -249,11 +278,11 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 if (party.leader != it) {
                     Utils.sendPlayerToInstance(it, gameId)
                 }
-                Utils.sendChat(
-                    it,
-                    "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name}'>"
-                )
             }
+            Utils.sendChat(
+                party.members,
+                "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name}'>"
+            )
 
             return Empty.getDefaultInstance()
         }

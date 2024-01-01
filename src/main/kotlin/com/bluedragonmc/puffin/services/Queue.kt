@@ -22,7 +22,8 @@ class Queue(app: ServiceHolder) : Service(app) {
      * desired game type is available, they will be sent to it immediately.
      */
     private fun sendPlayerToGame(player: UUID, gameType: GameType) {
-        val partySize = app.get(PartyManager::class).partyOf(player)?.members?.size ?: 1
+        val party = app.get(PartyManager::class).partyOf(player)
+        val partySize = party?.members?.size ?: 1
         val instances = app.get(GameManager::class).filterRunningGames(gameType)
         for (instance in instances.keys) {
             val emptySlots = app.get(GameStateManager::class).getEmptySlots(instance)
@@ -57,7 +58,7 @@ class Queue(app: ServiceHolder) : Service(app) {
             return false
         }
 
-        if (party != null) {
+        if (party != null && player == party.leader) {
             logger.info("Sending party of player $player (${party.members.size} members) to instance $gameId.")
             party.members.forEach { member ->
                 // Warp in the player's party when they are warped into a game
@@ -95,6 +96,12 @@ class Queue(app: ServiceHolder) : Service(app) {
                         uuid,
                         "<red><lang:queue.adding.failed:'${request.gameType.name}':'<dark_gray><lang:queue.adding.failed.invalid_map>'>"
                     )
+                    return Empty.getDefaultInstance()
+                }
+
+                val party = app.get(PartyManager::class).partyOf(uuid)
+                if (party != null && uuid != party.leader) {
+                    Utils.sendChat(uuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
                     return Empty.getDefaultInstance()
                 }
 
