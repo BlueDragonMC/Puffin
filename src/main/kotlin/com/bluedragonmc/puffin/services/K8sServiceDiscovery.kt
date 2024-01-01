@@ -10,6 +10,7 @@ import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.protobuf.Empty
+import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.Configuration
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.V1PodList
@@ -94,8 +95,28 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
         }
     }
 
-    private fun getProxies(): V1PodList =
-        api.listNamespacedPod(K8S_NAMESPACE, null, null, null, null, "app=proxy", null, null, null, null, null)
+    private fun getProxies(): V1PodList {
+        try {
+            return api.listNamespacedPod(
+                K8S_NAMESPACE,
+                null,
+                null,
+                null,
+                null,
+                "app=proxy",
+                null,
+                null,
+                null,
+                null,
+                null
+            )
+        } catch (e: ApiException) {
+            logger.error("There was an error while listing proxy pods!")
+            logger.error("HTTP status code: ${e.code}")
+            logger.error("HTTP response body:\n${e.responseBody}")
+            throw e
+        }
+    }
 
     /**
      * Gets the pod IP address of the specified pod

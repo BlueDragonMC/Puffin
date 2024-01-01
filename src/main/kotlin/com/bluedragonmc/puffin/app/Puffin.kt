@@ -65,6 +65,7 @@ class Puffin : ServiceHolder {
         val partyManager = PartyManager(app)
         val playerTracker = PlayerTracker(app)
         val privateMessageService = PrivateMessageService(app)
+        val jukeboxService = JukeboxService(app)
 
         val grpcServer = ServerBuilder.forPort(port)
             .addService(gameManager.ServerDiscoveryService())
@@ -74,6 +75,7 @@ class Puffin : ServiceHolder {
             .addService(partyManager.PartyService())
             .addService(playerTracker.PlayerTrackerService())
             .addService(privateMessageService.VelocityMessageService())
+            .addService(jukeboxService.JukeboxRedirectService())
             .addService(ProtoReflectionService.newInstance())
             .build()
 

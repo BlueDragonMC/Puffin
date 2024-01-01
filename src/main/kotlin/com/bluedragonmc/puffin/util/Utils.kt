@@ -64,7 +64,7 @@ object Utils {
         return channelTo(addr)
     }
 
-    private fun getChannelToProxyOf(player: UUID): ManagedChannel? =
+    fun getChannelToProxyOf(player: UUID): ManagedChannel? =
         app.get(K8sServiceDiscovery::class).getProxyIP(player)?.let { address ->
             return channelTo(address)
         }

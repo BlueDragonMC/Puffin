@@ -35,7 +35,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.4.1")
 
-    implementation("com.github.bluedragonmc:rpc:0953adbab3")
+    implementation("com.github.bluedragonmc:rpc:fb16ef4cc5")
 
     implementation("io.grpc:grpc-services:$grpcVersion")
     implementation("io.grpc:grpc-netty:$grpcVersion")
