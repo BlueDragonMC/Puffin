@@ -208,7 +208,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
             if (party != null) {
                 party.members.remove(player)
                 Utils.sendChat(player, Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.self>"))
-                Utils.sendChat(party.members, Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.others:'${player.name}'>"))
+                Utils.sendChat(
+                    party.members,
+                    Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.others:'${player.name}'>")
+                )
                 party.update()
             } else {
                 Utils.sendChat(player, "<red><lang:puffin.party.not_found>")
@@ -261,11 +264,12 @@ class PartyManager(app: ServiceHolder) : Service(app) {
 
             // Make sure the instance is not full
             val gameId = request.instanceUuid
-            val emptySlots =
-                app.get(GameStateManager::class).getEmptySlots(gameId) + tracker.getPlayersInInstance(gameId)
-                    .count { party.members.contains(it) }
+            val playersInInstance = tracker.getPlayersInInstance(gameId)
 
-            if (party.members.size - 1 > emptySlots) {
+            val emptySlots = app.get(GameStateManager::class).getEmptySlots(gameId)
+            val warpNeeded = party.members.count { member -> !playersInInstance.contains(member) }
+
+            if (warpNeeded > emptySlots) {
                 Utils.sendChat(uuid, "<red><lang:puffin.party.warp.not_enough_space>")
                 return Empty.getDefaultInstance()
             }
