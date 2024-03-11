@@ -54,7 +54,6 @@ class PartyManager(app: ServiceHolder) : Service(app) {
     ) {
 
         fun update() {
-            println("inside Party#update() with leader: $leader; members: $members; invitations: $invitations")
             if (members.size <= 1 && invitations.isEmpty()) {
                 // If a party has no members and all invites expires, delete it
                 Utils.sendChatAsync(members, "<red><lang:puffin.party.disband.auto>")

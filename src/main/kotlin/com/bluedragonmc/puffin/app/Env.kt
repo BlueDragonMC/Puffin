@@ -6,8 +6,7 @@ object Env {
 
     val WORLDS_FOLDER = System.getenv("PUFFIN_WORLD_FOLDER") ?: "/puffin/worlds/"
 
-    val MONGO_HOSTNAME = System.getenv("PUFFIN_MONGO_HOSTNAME") ?: "mongo"
-    val MONGO_PORT = System.getenv("PUFFIN_MONGO_PORT")?.toInt() ?: 27017
+    val MONGO_CONNECTION_STRING = System.getenv("PUFFIN_MONGO_CONNECTION_STRING") ?: "mongodb://mongo:27017"
 
     val LUCKPERMS_API_URL = System.getenv("PUFFIN_LUCKPERMS_URL") ?: "http://luckperms:8080"
 

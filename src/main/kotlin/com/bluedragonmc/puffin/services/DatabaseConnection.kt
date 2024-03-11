@@ -1,10 +1,8 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.puffin.app.Env.LUCKPERMS_API_URL
-import com.bluedragonmc.puffin.app.Env.MONGO_HOSTNAME
-import com.bluedragonmc.puffin.app.Env.MONGO_PORT
+import com.bluedragonmc.puffin.app.Env.MONGO_CONNECTION_STRING
 import com.bluedragonmc.puffin.app.Puffin
-import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.gson.Gson
@@ -23,7 +21,6 @@ import org.litote.kmongo.coroutine.CoroutineDatabase
 import org.litote.kmongo.coroutine.coroutine
 import org.litote.kmongo.reactivestreams.KMongo
 import java.io.File
-import java.net.Socket
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -83,9 +80,18 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         userColorCache.invalidate(player)
     }
 
-    private fun onConnected() {
+    override fun initialize() {
+        this.httpClient = OkHttpClient.Builder()
+            .cache(okhttp3.Cache(File("/tmp/okhttp"), 50_000_000))
+            .addNetworkInterceptor { chain ->
+                chain.proceed(chain.request()).newBuilder()
+                    .addHeader("Cache-Control", cacheControl.toString())
+                    .build()
+            }
+            .build()
+
         mongoClient = KMongo.createClient(MongoClientSettings.builder()
-            .applyConnectionString(ConnectionString("mongodb://$MONGO_HOSTNAME:$MONGO_PORT"))
+            .applyConnectionString(ConnectionString(MONGO_CONNECTION_STRING))
             .applyToSocketSettings { block ->
                 block.connectTimeout(5, TimeUnit.SECONDS)
             }.applyToClusterSettings { block ->
@@ -97,42 +103,7 @@ class DatabaseConnection(app: Puffin) : Service(app) {
 
         playersCollection = db.getCollection("players")
         mapsCollection = db.getCollection("maps")
-    }
 
-    override fun initialize() {
-        this.httpClient = OkHttpClient.Builder()
-            .cache(okhttp3.Cache(File("/tmp/okhttp"), 50_000_000))
-            .addNetworkInterceptor { chain ->
-                chain.proceed(chain.request()).newBuilder()
-                    .addHeader("Cache-Control", cacheControl.toString())
-                    .build()
-            }
-            .build()
-        // Wait for the port to become available, then connect to the database normally.
-        catchingTimer("mongo-connection-test", daemon = false, period = 5_000) {
-            try {
-                // Check if MongoDB is ready for requests
-                Socket(
-                    MONGO_HOSTNAME,
-                    MONGO_PORT
-                ).close() // Check if the port is open first; this is faster and doesn't require the creation of a whole client
-                KMongo.createClient(MongoClientSettings.builder()
-                    .applyConnectionString(ConnectionString("mongodb://$MONGO_HOSTNAME:$MONGO_PORT"))
-                    .applyToSocketSettings { settings ->
-                        settings.connectTimeout(2, TimeUnit.SECONDS)
-                        settings.readTimeout(2, TimeUnit.SECONDS)
-                    }.build()
-                )
-                    .close() // Create a client to verify that MongoDB is fully started and running on this port
-            } catch (ignored: Throwable) {
-                logger.debug("Waiting 5 seconds to retry connection to MongoDB.")
-                return@catchingTimer
-            }
-
-            logger.info("Connected to MongoDB.")
-            onConnected()
-            this.cancel()
-        }
         app.get(PlayerTracker::class).onLogout(::evictCachesForPlayer)
     }
 

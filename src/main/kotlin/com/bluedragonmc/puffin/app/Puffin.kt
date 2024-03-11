@@ -56,7 +56,6 @@ class Puffin : ServiceHolder {
         val start = System.nanoTime()
         val port = 50051
 
-        logger.warn("Starting Puffin with environment: ${System.getenv()}")
         if (DEV_MODE) logger.warn("Starting Puffin in development mode.")
 
         val gameManager = GameManager(app)
