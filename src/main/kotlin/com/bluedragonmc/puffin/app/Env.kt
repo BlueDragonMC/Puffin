@@ -22,4 +22,8 @@ object Env {
 
     // The amount of milliseconds in between proxy syncs
     val K8S_SYNC_PERIOD = System.getenv("PUFFIN_K8S_SYNC_PERIOD_MS")?.toLongOrNull() ?: 10_000L
+
+    val GRPC_SERVER_PORT = System.getenv("PUFFIN_GRPC_PORT")?.toIntOrNull() ?: 50051
+    val GS_GRPC_PORT = System.getenv("PUFFIN_GAMESERVER_GRPC_PORT")?.toIntOrNull() ?: 50051
+    val PROXY_GRPC_PORT = System.getenv("PUFFIN_PROXY_GRPC_PORT")?.toIntOrNull() ?: 50051
 }

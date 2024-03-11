@@ -1,6 +1,7 @@
 package com.bluedragonmc.puffin.app
 
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
+import com.bluedragonmc.puffin.app.Env.GRPC_SERVER_PORT
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.services.*
 import com.bluedragonmc.puffin.util.Utils
@@ -54,7 +55,6 @@ class Puffin : ServiceHolder {
 
         val app = this
         val start = System.nanoTime()
-        val port = 50051
 
         if (DEV_MODE) logger.warn("Starting Puffin in development mode.")
 
@@ -66,7 +66,7 @@ class Puffin : ServiceHolder {
         val privateMessageService = PrivateMessageService(app)
         val jukeboxService = JukeboxService(app)
 
-        val grpcServer = ServerBuilder.forPort(port)
+        val grpcServer = ServerBuilder.forPort(GRPC_SERVER_PORT)
             .addService(gameManager.ServerDiscoveryService())
             .addService(gameManager.InstanceService())
             .addService(queue.QueueService())
@@ -79,7 +79,7 @@ class Puffin : ServiceHolder {
             .build()
 
         grpcServer.start()
-        logger.info("gRPC server started on port $port.")
+        logger.info("gRPC server started on port $GRPC_SERVER_PORT.")
 
         register(Utils.UtilsService(app))
         register(playerTracker)

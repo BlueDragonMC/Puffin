@@ -5,6 +5,8 @@ import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
 import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
 import com.bluedragonmc.api.grpc.sendChatRequest
 import com.bluedragonmc.api.grpc.sendPlayerRequest
+import com.bluedragonmc.puffin.app.Env.GS_GRPC_PORT
+import com.bluedragonmc.puffin.app.Env.PROXY_GRPC_PORT
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.services.*
 import com.bluedragonmc.puffin.services.Queue
@@ -52,7 +54,7 @@ object Utils {
             logger.warn("Failed to get server address for game server '$serverName' (Can't get gRPC channel to the server)")
             return null
         }
-        return channelTo(addr)
+        return channelTo(addr, GS_GRPC_PORT)
     }
 
     fun getChannelToProxy(proxyPodName: String): ManagedChannel? {
@@ -61,18 +63,18 @@ object Utils {
             logger.warn("Failed to get server address for proxy '$proxyPodName' (Can't get gRPC channel to the server)")
             return null
         }
-        return channelTo(addr)
+        return channelTo(addr, PROXY_GRPC_PORT)
     }
 
     fun getChannelToProxyOf(player: UUID): ManagedChannel? =
         app.get(K8sServiceDiscovery::class).getProxyIP(player)?.let { address ->
-            return channelTo(address)
+            return channelTo(address, PROXY_GRPC_PORT)
         }
 
-    private fun channelTo(addr: String): ManagedChannel {
+    private fun channelTo(addr: String, port: Int): ManagedChannel {
         return channels.get(addr) {
-            logger.debug("Building managed channel with address '$addr' and port '50051'.")
-            ManagedChannelBuilder.forAddress(addr, 50051).usePlaintext().build()
+            logger.debug("Building managed channel with address '$addr' and port '$port'.")
+            ManagedChannelBuilder.forAddress(addr, port).usePlaintext().build()
         }
     }
 
