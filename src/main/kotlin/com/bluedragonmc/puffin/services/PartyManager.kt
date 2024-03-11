@@ -166,8 +166,6 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                         }
                     }
                 }
-            } else {
-                Utils.sendChat(uuid, "<red><lang:puffin.party.chat.not_found>")
             }
 
             return partyListResponse { /* empty response - no party found */ }
