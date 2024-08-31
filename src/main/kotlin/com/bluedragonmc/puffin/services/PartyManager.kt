@@ -65,7 +65,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 Utils.sendChatAsync(
                     members,
                     Utils.surroundWithSeparators(
-                        "<yellow><lang:puffin.transfer.auto:'${svc.getUsername(member)}':'$leaderUsername'>"
+                        "<yellow><lang:puffin.party.transfer.auto:'${svc.getUsername(member)}':'$leaderUsername'>"
                     )
                 )
                 leader = member
