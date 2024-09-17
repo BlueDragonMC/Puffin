@@ -21,11 +21,14 @@ class GameStateManager(app: Puffin) : Service(app) {
 
     fun setGameState(gameId: String, state: GameState) {
         emptyPlayerSlots[gameId] = if (state.joinable) state.openSlots else 0
+        val oldState = states[gameId]
         states[gameId] = state
-        app.get(ApiService::class).sendUpdate(
-            "instance", "update", gameId,
-            app.get(ApiService::class).createJsonObjectForGame(gameId)
-        )
+        if (oldState != state) {
+            app.get(ApiService::class).sendUpdate(
+                "instance", "update", gameId,
+                app.get(ApiService::class).createJsonObjectForGame(gameId)
+            )
+        }
     }
 
     fun getState(gameId: String) = states[gameId]
