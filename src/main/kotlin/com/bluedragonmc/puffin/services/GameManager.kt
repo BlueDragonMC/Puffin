@@ -154,7 +154,9 @@ class GameManager(app: Puffin) : Service(app) {
         val instances = gameServers[gs.name] ?: emptySet()
         gameServers.remove(gs.name)
         readyGameServers.remove(gs.name)
-        gameTypes.entries.removeAll { it.key in instances }
+        synchronized(gameTypes) {
+            gameTypes.entries.removeAll { it.key in instances }
+        }
         Utils.cleanupChannelsForServer(gs.name)
         app.get(ApiService::class).sendUpdate("gameServer", "remove", gs.name, null)
     }
@@ -257,10 +259,12 @@ class GameManager(app: Puffin) : Service(app) {
 
         val flags = other.selectorsList
 
-        return gameTypes.filter { (_, type) ->
-            (!flags.contains(GameTypeFieldSelector.GAME_NAME) || type.name == other.name) &&
-                    (!flags.contains(GameTypeFieldSelector.GAME_MODE) || type.mode == other.mode) &&
-                    (!flags.contains(GameTypeFieldSelector.MAP_NAME) || type.mapName == other.mapName)
+        synchronized(gameTypes) {
+            return gameTypes.filter { (_, type) ->
+                (!flags.contains(GameTypeFieldSelector.GAME_NAME) || type.name == other.name) &&
+                        (!flags.contains(GameTypeFieldSelector.GAME_MODE) || type.mode == other.mode) &&
+                        (!flags.contains(GameTypeFieldSelector.MAP_NAME) || type.mapName == other.mapName)
+            }
         }
     }
 
