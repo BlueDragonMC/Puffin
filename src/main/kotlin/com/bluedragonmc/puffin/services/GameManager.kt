@@ -186,9 +186,11 @@ class GameManager(app: Puffin) : Service(app) {
         app.get(PlayerTracker::class).updatePlayers(playersResponse)
 
         instancesResponse.instancesList.forEach { instance ->
-            if (!gameTypes.containsKey(instance.instanceUuid)) {
-                logger.warn("Updated game type information for previously-unknown instance ${instance.instanceUuid} (${instance.gameType})")
-                gameTypes[instance.instanceUuid] = instance.gameType
+            synchronized(gameTypes) {
+                if (!gameTypes.containsKey(instance.instanceUuid)) {
+                    logger.warn("Updated game type information for previously-unknown instance ${instance.instanceUuid} (${instance.gameType})")
+                    gameTypes[instance.instanceUuid] = instance.gameType
+                }
             }
 
             app.get(GameStateManager::class).setGameState(instance.instanceUuid, instance.gameState)
@@ -208,7 +210,9 @@ class GameManager(app: Puffin) : Service(app) {
             logger.info("Found ${playersResponse.playersCount} players on server $serverName")
             instancesResponse.instancesList.forEach { instance ->
                 val id = instance.instanceUuid
-                gameTypes[id] = instance.gameType
+                synchronized(gameTypes) {
+                    gameTypes[id] = instance.gameType
+                }
                 gameServers[serverName]!!.add(id)
                 handleInstanceCreated(instanceCreatedRequest {
                     this.serverName = serverName
@@ -246,8 +250,8 @@ class GameManager(app: Puffin) : Service(app) {
         }
     }
 
-    fun getGameType(gameId: String) = gameTypes[gameId]
-    fun getAllGames() = gameTypes.keys
+    fun getGameType(gameId: String) = synchronized(gameTypes) { gameTypes[gameId] }
+    fun getAllGames(): List<String> = synchronized(gameTypes) { ArrayList(gameTypes.keys) }
 
     /**
      * Filters the currently-running instances using the flags
@@ -409,7 +413,9 @@ class GameManager(app: Puffin) : Service(app) {
         )
         // Add to map of instances to game types
         val gameId = request.instanceUuid
-        gameTypes[gameId] = request.gameType
+        synchronized(gameTypes) {
+            gameTypes[gameId] = request.gameType
+        }
 
         // If the game state is present, record it as well
         if (gameState != null) {
@@ -432,7 +438,9 @@ class GameManager(app: Puffin) : Service(app) {
         logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
         val gameId = request.instanceUuid
         gameServers[request.serverName]?.remove(gameId)
-        gameTypes.remove(gameId)
+        synchronized(gameTypes) {
+            gameTypes.remove(gameId)
+        }
         app.get(ApiService::class).sendUpdate("instance", "remove", request.instanceUuid, null)
     }
 }
