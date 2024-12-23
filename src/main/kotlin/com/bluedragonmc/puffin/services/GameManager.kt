@@ -95,6 +95,12 @@ class GameManager(app: Puffin) : Service(app) {
                     readyGameServers.add(server.metadata.uid!!)
                     processServerAdded(server)
                 }
+            } else {
+                // Update existing game servers
+                val index = kubernetesObjects.indexOfFirst { it.metadata.uid == server.metadata.uid }
+                if (index in kubernetesObjects.indices) {
+                    kubernetesObjects[index] = server
+                }
             }
         }
         previousK8sObjects.forEach { obj ->
