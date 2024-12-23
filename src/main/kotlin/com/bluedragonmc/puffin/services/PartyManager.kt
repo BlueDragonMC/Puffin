@@ -4,11 +4,17 @@ import com.bluedragonmc.api.grpc.PartyListResponseKt.playerEntry
 import com.bluedragonmc.api.grpc.PartyServiceGrpcKt
 import com.bluedragonmc.api.grpc.PartySvc
 import com.bluedragonmc.api.grpc.partyListResponse
+import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.protobuf.Empty
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.*
+import kotlin.collections.component1
+import kotlin.collections.component2
 
 /**
  * Handles creating parties, party chat, invitations, warps, and transfers.
@@ -26,7 +32,7 @@ class PartyManager(app: ServiceHolder) : Service(app) {
     private val UUID.name: String
         get() = getUsername(this)
 
-    private fun getUsername(uuid: UUID) = app.get(DatabaseConnection::class).run {
+    internal fun getUsername(uuid: UUID) = app.get(DatabaseConnection::class).run {
         val color = getPlayerNameColor(uuid)
         val username = getPlayerName(uuid) ?: uuid.toString()
         return@run "<$color>$username"
@@ -43,6 +49,62 @@ class PartyManager(app: ServiceHolder) : Service(app) {
         )
     }
 
+    data class Marathon(
+        val party: Party,
+        val endsAt: Long,
+        private val points: MutableMap<UUID, Int>
+    ) {
+
+        private var cancelJob: Job
+
+        init {
+            cancelJob = Puffin.IO.launch {
+                delay(endsAt - System.currentTimeMillis())
+                println("Ending marathon after time expired!")
+                Utils.sendChat(
+                    party.members,
+                    Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.ended>\n${party.marathon!!.formatLeaderboard()}")
+                )
+                end()
+            }
+        }
+
+        fun addPoints(uuid: UUID, amount: Int) {
+            points[uuid] = points[uuid]?.plus(amount) ?: amount
+        }
+
+        fun end() {
+            println("Cancelling Marathon end job")
+            cancelJob.cancel()
+            points.clear()
+            party.marathon = null
+        }
+
+        fun formatLeaderboard(): String {
+            if (points.isEmpty()) {
+                return "<gray><lang:puffin.party.marathon.current_leaderboard.no_points>"
+            }
+            val fancyNumbers = "➀➁➂➃➄➅➆➇➈➉"
+            var str = points.entries
+                .sortedByDescending { (_, points) -> points }
+                .take(10)
+                .mapIndexed { index, (uuid, points) ->
+                    val color = when (index) {
+                        0 -> "#cfa959"
+                        1 -> "#c0c0c0"
+                        2 -> "#cd7f32"
+                        else -> "gray"
+                    }
+                    return@mapIndexed "<$color>${fancyNumbers[index]} ${party.svc.getUsername(uuid)}<p1>: <yellow>${points}"
+                }
+                .joinToString("\n")
+            if (points.size > 10) {
+                str += "\n<gray>... (+${points.size - 10} more)"
+            }
+            return str
+        }
+    }
+
     data class Party(
         val svc: PartyManager,
         /**
@@ -51,12 +113,14 @@ class PartyManager(app: ServiceHolder) : Service(app) {
         val members: MutableList<UUID>,
         val invitations: MutableMap<UUID, Timer>,
         var leader: UUID,
+        var marathon: Marathon? = null,
     ) {
 
         fun update() {
             if (members.size <= 1 && invitations.isEmpty()) {
                 // If a party has no members and all invites expires, delete it
                 Utils.sendChatAsync(members, "<red><lang:puffin.party.disband.auto>")
+                marathon?.end()
                 svc.parties.remove(this)
             } else if (svc.app.get(PlayerTracker::class).getPlayer(leader) == null) {
                 // If the party leader left, transfer the party to one of the members
@@ -284,6 +348,114 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 party.members,
                 "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name}'>"
             )
+
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun getMarathonLeaderboard(request: PartySvc.MarathonLeaderboardRequest): Empty = handleRPC {
+            for (uuidString in request.playerUuidsList) {
+                val uuid = UUID.fromString(uuidString)
+                val party = partyOf(uuid)
+                if (party == null) {
+                    if (!request.silent) {
+                        Utils.sendChat(uuid, "<red><lang:puffin.party.not_found>")
+                    }
+                    continue
+                }
+                val marathon = party.marathon
+                if (marathon == null) {
+                    if (!request.silent) {
+                        Utils.sendChat(uuid, "<red><lang:puffin.party.marathon.not_found>")
+                    }
+                    continue
+                }
+                val lb = marathon.formatLeaderboard()
+                val duration = (marathon.endsAt - System.currentTimeMillis()) / 1000
+                val hours = duration / 3600
+                val minutes = (duration / 60) % 60
+                val seconds = duration % 60
+                Utils.sendChat(uuid, Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.current_leaderboard>\n${lb}\n<yellow><lang:puffin.party.marathon.time_remaining:'<p1>$hours':'$minutes':'$seconds'>"))
+            }
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun startMarathon(request: PartySvc.StartMarathonRequest): Empty = handleRPC {
+
+            val uuid = UUID.fromString(request.playerUuid)
+            val party = partyOf(uuid)
+
+            if (party == null) {
+                Utils.sendChat(uuid, "<red><lang:puffin.party.not_found>")
+                return Empty.getDefaultInstance()
+            }
+
+            if (party.marathon != null) {
+                Utils.sendChat(uuid, "<red><lang:puffin.party.marathon_already_started>")
+                return Empty.getDefaultInstance()
+            }
+
+            if (uuid != party.leader) {
+                Utils.sendChat(uuid, "<red><lang:puffin.party.marathon.not_leader>")
+                return Empty.getDefaultInstance()
+            }
+
+            party.marathon = Marathon(party, System.currentTimeMillis() + request.durationMs, mutableMapOf())
+
+            val minutes = request.durationMs / 1000 / 60
+            Utils.sendChat(
+                party.members,
+                Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.started:'${getUsername(uuid)}':'<p1><lang:puffin.party.marathon.started.time_period:$minutes>'>")
+            )
+
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun stopMarathon(request: PartySvc.StopMarathonRequest): Empty = handleRPC {
+
+            val uuid = UUID.fromString(request.playerUuid)
+            val party = partyOf(uuid)
+
+            if (party == null) {
+                Utils.sendChat(uuid, "<red><lang:puffin.party.not_found>")
+                return Empty.getDefaultInstance()
+            }
+
+            if (party.marathon == null) {
+                Utils.sendChat(uuid, "<red><lang:puffin.party.marathon.not_found>")
+                return Empty.getDefaultInstance()
+            }
+
+            if (uuid != party.leader) {
+                Utils.sendChat(uuid, "<red><lang:puffin.party.marathon.not_leader>")
+                return Empty.getDefaultInstance()
+            }
+
+            Utils.sendChat(
+                party.members,
+                Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.ended_by_player:'${getUsername(uuid)}'>\n${party.marathon!!.formatLeaderboard()}")
+            )
+
+            party.marathon!!.end()
+            party.marathon = null
+
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun recordCoinAward(request: PartySvc.RecordCoinAwardRequest): Empty {
+            val uuid = UUID.fromString(request.playerUuid)
+            val party = partyOf(uuid)
+
+            if (party == null || party.marathon == null) {
+                return Empty.getDefaultInstance()
+            }
+
+            val leaderGameId = app.get(PlayerTracker::class).getPlayer(party.leader)?.gameId
+            if (request.gameId != leaderGameId) {
+                Utils.sendChat(uuid, "<gray><lang:puffin.party.marathon.outside_points>")
+                return Empty.getDefaultInstance()
+            }
+
+            party.marathon?.addPoints(uuid, request.coins)
 
             return Empty.getDefaultInstance()
         }

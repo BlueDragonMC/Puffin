@@ -164,6 +164,9 @@ class GameManager(app: Puffin) : Service(app) {
             gameTypes.entries.removeAll { it.key in instances }
         }
         Utils.cleanupChannelsForServer(gs.name)
+        for (instance in instances) {
+            app.get(GameStateManager::class).clearGameState(instance)
+        }
         app.get(ApiService::class).sendUpdate("gameServer", "remove", gs.name, null)
     }
 
@@ -452,6 +455,7 @@ class GameManager(app: Puffin) : Service(app) {
         synchronized(gameTypes) {
             gameTypes.remove(gameId)
         }
+        app.get(GameStateManager::class).clearGameState(gameId)
         app.get(ApiService::class).sendUpdate("instance", "remove", request.instanceUuid, null)
     }
 }

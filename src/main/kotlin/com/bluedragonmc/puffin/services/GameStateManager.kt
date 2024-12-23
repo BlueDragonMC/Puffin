@@ -14,16 +14,16 @@ import com.google.protobuf.Empty
  */
 class GameStateManager(app: Puffin) : Service(app) {
 
-    private val emptyPlayerSlots = mutableMapOf<String, Int>()
     private val states = mutableMapOf<String, GameState>()
 
-    fun getEmptySlots(gameId: String) = emptyPlayerSlots[gameId] ?: 0
+    fun getEmptySlots(gameId: String) = states[gameId]?.let {
+        if (it.joinable) it.openSlots else 0
+    } ?: 0
 
     fun setGameState(gameId: String, state: GameState) {
-        emptyPlayerSlots[gameId] = if (state.joinable) state.openSlots else 0
         val oldState = states[gameId]
         states[gameId] = state
-        if (oldState != state) {
+        if (oldState != state && oldState != null) {
             app.get(ApiService::class).sendUpdate(
                 "instance", "update", gameId,
                 app.get(ApiService::class).createJsonObjectForGame(gameId)
@@ -32,6 +32,11 @@ class GameStateManager(app: Puffin) : Service(app) {
     }
 
     fun getState(gameId: String) = states[gameId]
+
+    fun clearGameState(gameId: String) {
+        // Called when a game is removed
+        states.remove(gameId)
+    }
 
     inner class GameStateService : GameStateServiceGrpcKt.GameStateServiceCoroutineImplBase() {
         override suspend fun updateGameState(request: ServerTracking.GameStateUpdateRequest): Empty = handleRPC {
