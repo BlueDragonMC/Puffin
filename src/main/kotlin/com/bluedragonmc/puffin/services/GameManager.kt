@@ -24,6 +24,7 @@ import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
+import java.util.UUID
 
 /**
  * Fetches and maintains a list of game servers using the Kubernetes API
@@ -200,6 +201,10 @@ class GameManager(app: Puffin) : Service(app) {
             }
 
             app.get(GameStateManager::class).setGameState(instance.instanceUuid, instance.gameState)
+
+            for (player in instance.playerUuidsList) {
+                app.get(PlayerTracker::class).setGameId(UUID.fromString(player), instance.instanceUuid)
+            }
         }
     }
 
@@ -225,6 +230,9 @@ class GameManager(app: Puffin) : Service(app) {
                     this.instanceUuid = id
                     this.gameType = instance.gameType
                 }, instance.gameStateOrNull)
+                for (player in instance.playerUuidsList) {
+                    app.get(PlayerTracker::class).setGameId(UUID.fromString(player), id)
+                }
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {

@@ -151,6 +151,7 @@ class ApiService(app: ServiceHolder) : Service(app) {
             add("gameState", JsonObject().apply {
                 addProperty("joinable", state?.joinable)
                 addProperty("openSlots", state?.openSlots)
+                addProperty("maxSlots", state?.maxSlots)
                 addProperty("playerCount", playerTracker.getPlayersInInstance(gameId).size)
                 addProperty("stateName", state?.gameState?.name)
             })
