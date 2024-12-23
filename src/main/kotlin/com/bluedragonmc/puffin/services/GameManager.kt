@@ -1,7 +1,6 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
-import com.bluedragonmc.api.grpc.CommonTypes.GameState
 import com.bluedragonmc.api.grpc.CommonTypes.GameType
 import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.puffin.app.Env
@@ -229,7 +228,8 @@ class GameManager(app: Puffin) : Service(app) {
                     this.serverName = serverName
                     this.instanceUuid = id
                     this.gameType = instance.gameType
-                }, instance.gameStateOrNull)
+                    this.gameState = instance.gameState
+                })
                 for (player in instance.playerUuidsList) {
                     app.get(PlayerTracker::class).setGameId(UUID.fromString(player), id)
                 }
@@ -395,7 +395,7 @@ class GameManager(app: Puffin) : Service(app) {
 
         override suspend fun createInstance(request: ServerTracking.InstanceCreatedRequest): Empty = handleRPC {
             // Called when an instance is created on a game server
-            handleInstanceCreated(request, null)
+            handleInstanceCreated(request)
             return Empty.getDefaultInstance()
         }
 
@@ -420,7 +420,7 @@ class GameManager(app: Puffin) : Service(app) {
             }
     }
 
-    private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest, gameState: GameState?) {
+    private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
         logger.info(
             "Game created: ${request.serverName}/${request.instanceUuid} " +
                     "(${request.gameType.name}/${request.gameType.mapName}/${request.gameType.mode})"
@@ -431,10 +431,7 @@ class GameManager(app: Puffin) : Service(app) {
             gameTypes[gameId] = request.gameType
         }
 
-        // If the game state is present, record it as well
-        if (gameState != null) {
-            app.get(GameStateManager::class).setGameState(gameId, gameState)
-        }
+        app.get(GameStateManager::class).setGameState(gameId, request.gameState)
 
         // Add to list of containers
         if (!gameServers.containsKey(request.serverName)) {
