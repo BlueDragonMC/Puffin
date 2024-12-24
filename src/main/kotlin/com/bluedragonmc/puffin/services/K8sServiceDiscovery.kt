@@ -53,12 +53,14 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
         }
     }
 
+    private var proxyPodNames = listOf<String>()
+
     @Synchronized
     private fun periodicSync() {
         val playerTracker = app.get(PlayerTracker::class)
-        val proxies = getProxies().items.mapNotNull { it.metadata?.name }
+        proxyPodNames = getProxies().items.mapNotNull { it.metadata?.name }
 
-        proxies.forEach { podName ->
+        proxyPodNames.forEach { podName ->
             Puffin.IO.launch {
                 val channel = Utils.getChannelToProxy(podName)
                 if (channel == null) {
@@ -138,4 +140,6 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
             pod.status?.podIP
         }
     }
+
+    fun getAllProxies(): List<String> = proxyPodNames
 }

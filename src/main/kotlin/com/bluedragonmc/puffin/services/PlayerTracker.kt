@@ -125,10 +125,25 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
         players.entries.removeIf { (_, player) ->
             player.gameId == null && player.gameServerName == null && player.proxyPodName == null
         }
+        val gm = app.get(GameManager::class)
+        val gs = gm.getGameServers().map { it.name }
+        val games = gm.getAllGames()
+        val proxies = app.get(K8sServiceDiscovery::class).getAllProxies()
+        for ((player, state) in players.entries) {
+            if (state.gameServerName !in gs) {
+                setServer(player, null)
+            }
+            if (state.gameId !in games) {
+                setGameId(player, null)
+            }
+            if (state.proxyPodName !in proxies) {
+                setProxy(player, null)
+            }
+        }
     }
 
     override fun initialize() {
-        Utils.catchingTimer("PlayerTracker cleanup", true, 0.toLong(), 10.toLong()) { cleanup() }
+        Utils.catchingTimer("PlayerTracker cleanup", true, 0.toLong(), 10_000.toLong()) { cleanup() }
     }
 
     inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
