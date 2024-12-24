@@ -67,30 +67,9 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
                 }
                 val stub = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
                 val response = stub.getPlayers(Empty.getDefaultInstance())
-                val existingPlayers = playerTracker.getPlayersOnProxy(podName)
 
                 // Set the proxy name of every connected player
-                playerTracker.updatePlayers(podName, response)
-                val newPlayerList = playerTracker.getPlayersOnProxy(podName)
-
-                if (existingPlayers.size != newPlayerList.size) {
-                    logger.info("Player count changed on proxy $podName: ${existingPlayers.size} -> ${newPlayerList.size}")
-                }
-
-                // Check if any existing players are not on the 'new players' response.
-                // If so, this was a desync issue, and they should be removed.
-                val playersToRemove = mutableListOf<UUID>()
-                existingPlayers.forEach {
-                    if (response.playersList.none { listItem -> listItem.uuid == it.toString() }) {
-                        playersToRemove.add(it)
-                    }
-                }
-                if (playersToRemove.isNotEmpty()) {
-                    logger.warn("Unregistering ${playersToRemove.size} players which are no longer on proxy $podName: $playersToRemove")
-                    playersToRemove.forEach {
-                        playerTracker.removePlayer(it)
-                    }
-                }
+                playerTracker.updateProxyPlayers(podName, response)
             }
         }
     }

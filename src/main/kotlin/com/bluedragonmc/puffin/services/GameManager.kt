@@ -23,7 +23,6 @@ import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
-import java.util.UUID
 
 /**
  * Fetches and maintains a list of game servers using the Kubernetes API
@@ -192,7 +191,7 @@ class GameManager(app: Puffin) : Service(app) {
         val instancesResponse =
             GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
 
-        app.get(PlayerTracker::class).updatePlayers(playersResponse)
+        app.get(PlayerTracker::class).updateGameServerPlayers(serverName, playersResponse)
 
         instancesResponse.instancesList.forEach { instance ->
             synchronized(gameTypes) {
@@ -203,10 +202,7 @@ class GameManager(app: Puffin) : Service(app) {
             }
 
             app.get(GameStateManager::class).setGameState(instance.instanceUuid, instance.gameState)
-
-            for (player in instance.playerUuidsList) {
-                app.get(PlayerTracker::class).setGameId(UUID.fromString(player), instance.instanceUuid)
-            }
+            app.get(PlayerTracker::class).updateGamePlayers(instance.instanceUuid, instance)
         }
     }
 
@@ -219,7 +215,7 @@ class GameManager(app: Puffin) : Service(app) {
             val instancesResponse =
                 GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
 
-            app.get(PlayerTracker::class).updatePlayers(playersResponse)
+            app.get(PlayerTracker::class).updateGameServerPlayers(serverName, playersResponse)
             logger.info("Found ${playersResponse.playersCount} players on server $serverName")
             instancesResponse.instancesList.forEach { instance ->
                 val id = instance.instanceUuid
@@ -233,9 +229,7 @@ class GameManager(app: Puffin) : Service(app) {
                     this.gameType = instance.gameType
                     this.gameState = instance.gameState
                 })
-                for (player in instance.playerUuidsList) {
-                    app.get(PlayerTracker::class).setGameId(UUID.fromString(player), id)
-                }
+                app.get(PlayerTracker::class).updateGamePlayers(id, instance)
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {

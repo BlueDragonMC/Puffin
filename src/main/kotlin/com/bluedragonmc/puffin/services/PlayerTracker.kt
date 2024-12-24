@@ -2,10 +2,10 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.puffin.dashboard.ApiService
+import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.gson.JsonObject
 import com.google.protobuf.Empty
-import kotlinx.coroutines.runBlocking
 import java.util.*
 import java.util.function.Consumer
 
@@ -21,9 +21,19 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     private val logoutActions = mutableListOf<Consumer<UUID>>()
 
     fun getPlayer(uuid: UUID) = players[uuid]
-    fun getPlayersInInstance(gameId: String) = players.filter { (_, state) -> state.gameId == gameId }.map { it.key }
-    fun getPlayersOnProxy(podName: String) =
-        players.filter { (_, state) -> state.proxyPodName == podName }.map { it.key }
+
+    fun getPlayersInInstance(gameId: String) = players
+        .filter { (_, state) -> state.gameId == gameId }
+        .map { it.key }
+
+    fun getPlayersOnProxy(podName: String) = players
+            .filter { (_, state) -> state.proxyPodName == podName }
+            .map { it.key }
+
+    fun getPlayersInGameServer(serverName: String) = players
+        .filter { (_, state) -> state.gameServerName == serverName }
+        .map { it.key }
+
     fun removePlayer(uuid: UUID) = players.remove(uuid)
 
     fun setProxy(player: UUID, proxyPodName: String?) {
@@ -58,14 +68,41 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
         logoutActions.add(action)
     }
 
-    fun updatePlayers(response: PlayerHolderOuterClass.GetPlayersResponse) {
-        response.playersList.forEach { player ->
-            val uuid = UUID.fromString(player.uuid)
-            setServer(uuid, player.serverName)
+    fun updateGameServerPlayers(serverName: String, response: PlayerHolderOuterClass.GetPlayersResponse) {
+        val existingPlayers = getPlayersInGameServer(serverName)
+        val newPlayers = response.playersList.map { UUID.fromString(it.uuid) }
+        for (player in existingPlayers) {
+            if (player !in newPlayers) {
+                setServer(player, null)
+            }
+        }
+        for (player in newPlayers) {
+            setServer(player, serverName)
         }
     }
 
-    fun updatePlayers(proxyPodName: String, response: PlayerHolderOuterClass.GetPlayersResponse) {
+    fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance) {
+        val existingPlayers = getPlayersInInstance(gameId)
+        val newPlayers = response.playerUuidsList.map(UUID::fromString)
+        for (player in existingPlayers) {
+            if (player !in newPlayers) {
+                setGameId(player, null)
+            }
+        }
+        for (player in newPlayers) {
+            setGameId(player, gameId)
+        }
+    }
+
+    fun updateProxyPlayers(proxyPodName: String, response: PlayerHolderOuterClass.GetPlayersResponse) {
+        val existingPlayers = getPlayersOnProxy(proxyPodName)
+        val newPlayers = response.playersList.map { UUID.fromString(it.uuid) }
+        for (player in existingPlayers) {
+            if (player !in newPlayers) {
+                setServer(player, null)
+                setProxy(player, null)
+            }
+        }
         response.playersList.forEach { player ->
             val uuid = UUID.fromString(player.uuid)
             setServer(uuid, player.serverName)
@@ -82,6 +119,16 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             // Count the amount of players in any of these instances
             players.entries.count { (_, state) -> state.gameId != null && instances.contains(state.gameId) }
         }
+    }
+
+    fun cleanup() {
+        players.entries.removeIf { (_, player) ->
+            player.gameId == null && player.gameServerName == null && player.proxyPodName == null
+        }
+    }
+
+    override fun initialize() {
+        Utils.catchingTimer("PlayerTracker cleanup", true, 0.toLong(), 10.toLong()) { cleanup() }
     }
 
     inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
@@ -146,7 +193,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
                     PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.USERNAME -> {
                         return queryPlayerResponse {
                             username = request.username
-                            val foundUuid = runBlocking { app.get(DatabaseConnection::class).getPlayerUUID(username) }
+                            val foundUuid = app.get(DatabaseConnection::class).getPlayerUUID(username)
                             foundUuid?.let {
                                 uuid = it.toString()
                                 isOnline = players.containsKey(it)
@@ -159,7 +206,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
                         return queryPlayerResponse {
                             uuid = request.uuid
                             isOnline = players.containsKey(uuidIn)
-                            val foundUsername = runBlocking { app.get(DatabaseConnection::class).getPlayerName(uuidIn) }
+                            val foundUsername = app.get(DatabaseConnection::class).getPlayerName(uuidIn)
                             foundUsername?.let {
                                 username = it
                             }
