@@ -374,7 +374,10 @@ class PartyManager(app: ServiceHolder) : Service(app) {
                 val hours = duration / 3600
                 val minutes = (duration / 60) % 60
                 val seconds = duration % 60
-                Utils.sendChat(uuid, Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.current_leaderboard>\n${lb}\n<yellow><lang:puffin.party.marathon.time_remaining:'<p1>$hours':'$minutes':'$seconds'>"))
+                Utils.sendChat(
+                    uuid,
+                    Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.current_leaderboard>\n${lb}\n<yellow><lang:puffin.party.marathon.time_remaining:'<p1>$hours':'<p1>$minutes':'<p1>$seconds'>")
+                )
             }
             return Empty.getDefaultInstance()
         }
