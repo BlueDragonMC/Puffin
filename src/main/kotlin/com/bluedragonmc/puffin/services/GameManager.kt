@@ -91,14 +91,24 @@ class GameManager(app: Puffin) : Service(app) {
                 kubernetesObjects.add(server)
                 val state = server.raw.get("status")?.asJsonObject?.get("state")?.asString
                 if (state == "Ready" || state == "Reserved" || state == "Allocated") {
-                    readyGameServers.add(server.metadata.uid!!)
+                    readyGameServers.add(server.metadata.name!!)
                     processServerAdded(server)
                 }
             } else {
                 // Update existing game servers
                 val index = kubernetesObjects.indexOfFirst { it.metadata.uid == server.metadata.uid }
                 if (index in kubernetesObjects.indices) {
+                    val old = kubernetesObjects[index]
                     kubernetesObjects[index] = server
+                    if (old != server) {
+                        app.get(ApiService::class).apply {
+                            sendMerge(
+                                "gameServer", "patch", server.metadata.name!!,
+                                createJsonObjectForGameServer(AgonesGameServer(old)),
+                                createJsonObjectForGameServer(AgonesGameServer(server))
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -128,12 +138,21 @@ class GameManager(app: Puffin) : Service(app) {
                 "MODIFIED" -> {
                     // An existing game server had its metadata or other information change
                     val index = kubernetesObjects.indexOfFirst { it.metadata.uid == obj.metadata.uid }
+                    val old = kubernetesObjects[index]
                     kubernetesObjects[index] = obj
+                    if (old != obj) {
+                        val api = app.get(ApiService::class)
+                        api.sendMerge(
+                            "gameServer", "patch", obj.metadata.name!!,
+                            api.createJsonObjectForGameServer(AgonesGameServer(old)),
+                            api.createJsonObjectForGameServer(AgonesGameServer(obj))
+                        )
+                    }
                     logger.debug("Game server '${obj.metadata.name}' is now in state: $newState")
-                    if (newState == "Ready" && !readyGameServers.contains(obj.metadata.uid)) {
+                    if (newState == "Ready" && !readyGameServers.contains(obj.metadata.name)) {
                         // If the server changed from any other state to ready (and it hasn't been ready before),
                         // attempt to ping it and look at its players and instances.
-                        readyGameServers.add(obj.metadata.uid!!)
+                        readyGameServers.add(obj.metadata.name!!)
                         processServerAdded(obj)
                     }
                 }

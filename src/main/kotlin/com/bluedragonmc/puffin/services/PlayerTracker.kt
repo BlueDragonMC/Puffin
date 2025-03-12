@@ -22,6 +22,8 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
 
     fun getPlayer(uuid: UUID) = players[uuid]
 
+    fun getPlayers() = players.toMap()
+
     fun getPlayersInInstance(gameId: String) = players
         .filter { (_, state) -> state.gameId == gameId }
         .map { it.key }
@@ -143,7 +145,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
     }
 
     override fun initialize() {
-        Utils.catchingTimer("PlayerTracker cleanup", true, 0.toLong(), 10_000.toLong()) { cleanup() }
+        Utils.catchingTimer("PlayerTracker cleanup", true, 10_000.toLong(), 10_000.toLong()) { cleanup() }
     }
 
     inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
@@ -170,7 +172,7 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             if (oldState?.gameServerName == null)
                 logger.warn("Player logged out without a recorded game server: uuid=$uuid")
 
-            app.get(ApiService::class).sendUpdate("player", "logout", request.uuid, null)
+            app.get(ApiService::class).sendUpdate("player", "remove", request.uuid, null)
 
             return Empty.getDefaultInstance()
         }
@@ -182,10 +184,9 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
                 setGameId(uuid, request.instanceId)
                 setServer(uuid, request.serverName)
                 logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
-                app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {
-                    addProperty("instance", request.instanceId)
-                    addProperty("serverName", request.serverName)
-                })
+                app.get(ApiService::class).apply {
+                    sendUpdate("player", "update", request.uuid, createJsonObjectForPlayer(uuid, getPlayer(uuid) ?: return@apply))
+                }
                 return Empty.getDefaultInstance()
             }
 
@@ -195,10 +196,9 @@ class PlayerTracker(app: ServiceHolder) : Service(app) {
             setGameId(uuid, request.newInstance)
             setServer(uuid, request.newServerName)
             logger.info("Player Transfer > Player ${request.uuid} switched to instance ${request.newServerName}/${request.newInstance}")
-            app.get(ApiService::class).sendUpdate("player", "transfer", request.uuid, JsonObject().apply {
-                addProperty("instance", request.newInstance)
-                addProperty("serverName", request.newServerName)
-            })
+            app.get(ApiService::class).apply {
+                sendUpdate("player", "update", request.uuid, createJsonObjectForPlayer(uuid, getPlayer(uuid) ?: return@apply))
+            }
             return Empty.getDefaultInstance()
         }
 

@@ -37,6 +37,7 @@ dependencies {
 
     implementation("com.github.bluedragonmc:rpc:18b740c038")
 //    implementation("com.bluedragonmc:rpc:1.0")
+    implementation("com.tananaev:json-patch:1.2")
 
     implementation("io.grpc:grpc-services:$grpcVersion")
     implementation("io.grpc:grpc-netty:$grpcVersion")
