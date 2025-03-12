@@ -23,7 +23,7 @@ class Queue(app: ServiceHolder) : Service(app) {
      */
     private fun sendPlayerToGame(player: UUID, gameType: GameType) {
         val party = app.get(PartyManager::class).partyOf(player)
-        val partySize = party?.members?.size ?: 1
+        val partySize = party?.getMembers()?.size ?: 1
         val instances = app.get(GameManager::class).filterRunningGames(gameType)
         for (instance in instances.keys) {
             val emptySlots = app.get(GameStateManager::class).getEmptySlots(instance)
@@ -51,7 +51,7 @@ class Queue(app: ServiceHolder) : Service(app) {
         val party = app.get(PartyManager::class).partyOf(player)
 
         val emptySlots = gameStateManager.getEmptySlots(gameId)
-        val requiredSlots = party?.members?.size ?: 1
+        val requiredSlots = party?.getMembers()?.size ?: 1
 
         if (emptySlots < requiredSlots) {
             logger.info("Attempted to send $requiredSlots player(s) to instance $gameId, but it only has $emptySlots empty slots.")
@@ -59,8 +59,8 @@ class Queue(app: ServiceHolder) : Service(app) {
         }
 
         if (party != null && player == party.leader) {
-            logger.info("Sending party of player $player (${party.members.size} members) to instance $gameId.")
-            party.members.forEach { member ->
+            logger.info("Sending party of player $player (${party.getMembers().size} members) to instance $gameId.")
+            party.getMembers().forEach { member ->
                 // Warp in the player's party when they are warped into a game
                 Utils.sendPlayerToInstance(member, gameId)
             }
