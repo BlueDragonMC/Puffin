@@ -44,8 +44,8 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         .maximumSize(10_000)
         .expireAfterWrite(Duration.ofMinutes(10))
 
-    private val uuidCache: Cache<String, UUID> = builder.build()
-    private val usernameCache: Cache<UUID, String> = builder.build()
+    private val uuidCache: Cache<String, UUID?> = builder.build()
+    private val usernameCache: Cache<UUID, String?> = builder.build()
     private val userColorCache: Cache<UUID, String> = builder.build()
 
     fun getPlayerNameColor(uuid: UUID): String = userColorCache.get(uuid) {

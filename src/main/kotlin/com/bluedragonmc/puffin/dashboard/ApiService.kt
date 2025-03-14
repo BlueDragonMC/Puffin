@@ -61,18 +61,6 @@ class ApiService(app: ServiceHolder) : Service(app) {
                     createJsonObjectForGame(decoded.get("instance").asString).toString()
                 )
 
-                "getLocation" -> {
-                    val uuid = decoded.get("uuid").asString
-                    val location = app.get(PlayerTracker::class).getPlayer(UUID.fromString(uuid))
-                    conn.send(JsonObject().apply {
-                        addProperty("type", "playerLocation")
-                        addProperty("uuid", uuid)
-                        addProperty("proxy", location?.proxyPodName)
-                        addProperty("gameServer", location?.gameServerName)
-                        addProperty("gameId", location?.gameId)
-                    }.toString())
-                }
-
                 "getParties" -> {
                     conn.send(JsonObject().apply {
                         addProperty("type", "parties")

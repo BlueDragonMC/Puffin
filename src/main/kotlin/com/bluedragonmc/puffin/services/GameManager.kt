@@ -255,7 +255,7 @@ class GameManager(app: Puffin) : Service(app) {
             if (DEV_MODE) return
 
             try {
-                defaultApi.readNamespacedPod(serverName, K8S_NAMESPACE, null)
+                defaultApi.readNamespacedPod(serverName, K8S_NAMESPACE).execute()
             } catch (e: ApiException) {
                 // If there was an error looking up the pod, it likely no longer exists.
                 // This means there was some sort of desync between our watch and the reality in the cluster.

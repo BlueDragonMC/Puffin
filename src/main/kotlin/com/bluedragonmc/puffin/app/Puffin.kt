@@ -6,7 +6,7 @@ import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.services.*
 import com.bluedragonmc.puffin.util.Utils
 import io.grpc.ServerBuilder
-import io.grpc.protobuf.services.ProtoReflectionService
+import io.grpc.protobuf.services.ProtoReflectionServiceV1
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,7 +75,7 @@ class Puffin : ServiceHolder {
             .addService(playerTracker.PlayerTrackerService())
             .addService(privateMessageService.VelocityMessageService())
             .addService(jukeboxService.JukeboxRedirectService())
-            .addService(ProtoReflectionService.newInstance())
+            .addService(ProtoReflectionServiceV1.newInstance())
             .build()
 
         grpcServer.start()

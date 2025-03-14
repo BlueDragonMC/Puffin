@@ -29,7 +29,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
     private val serverAddresses = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofMinutes(60))
         .expireAfterAccess(Duration.ofMinutes(60))
-        .build<String, String>()
+        .build<String, String?>()
 
     override fun initialize() {
         val client = Config.defaultClient()
@@ -78,19 +78,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
 
     private fun getProxies(): V1PodList {
         try {
-            return api.listNamespacedPod(
-                K8S_NAMESPACE,
-                null,
-                null,
-                null,
-                null,
-                "app=proxy",
-                null,
-                null,
-                null,
-                null,
-                null
-            )
+            return api.listNamespacedPod(K8S_NAMESPACE).labelSelector("app=proxy").execute()
         } catch (e: ApiException) {
             logger.error("There was an error while listing proxy pods!")
             logger.error("HTTP status code: ${e.code}")
@@ -107,7 +95,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
             return DEFAULT_PROXY_IP
         }
         return serverAddresses.get(podName) {
-            val pod = api.readNamespacedPod(podName, K8S_NAMESPACE, null)
+            val pod = api.readNamespacedPod(podName, K8S_NAMESPACE).execute()
             pod.status?.podIP
         }
     }
@@ -121,7 +109,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
         }
         val proxy = app.get(PlayerTracker::class).getPlayer(player)?.proxyPodName ?: return null
         return serverAddresses.get(proxy) {
-            val pod = api.readNamespacedPod(proxy, K8S_NAMESPACE, null)
+            val pod = api.readNamespacedPod(proxy, K8S_NAMESPACE).execute()
             pod.status?.podIP
         }
     }
@@ -136,7 +124,7 @@ class K8sServiceDiscovery(app: ServiceHolder) : Service(app) {
             return DEFAULT_GS_IP
         }
         return serverAddresses.get(serverName) {
-            val pod = api.readNamespacedPod(serverName, K8S_NAMESPACE, null)
+            val pod = api.readNamespacedPod(serverName, K8S_NAMESPACE).execute()
             pod.status?.podIP
         }
     }
