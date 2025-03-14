@@ -2,7 +2,7 @@
 # This Dockerfile runs on the CI/CD pipeline when Puffin is being deployed.
 
 # Build the project into an executable JAR
-FROM docker.io/library/gradle:7.4.2-jdk17-alpine as build
+FROM docker.io/library/gradle:8.13-jdk21-alpine as build
 # Copy build files and source code
 COPY . /work
 WORKDIR /work
@@ -10,7 +10,7 @@ WORKDIR /work
 RUN /usr/bin/gradle --console=plain --info --stacktrace --no-daemon build
 
 # Run the built JAR and expose port 25565
-FROM docker.io/library/eclipse-temurin:17-jre-alpine
+FROM docker.io/library/eclipse-temurin:21-jre-alpine
 
 LABEL com.bluedragonmc.image=puffin
 LABEL com.bluedragonmc.environment=production
