@@ -1,26 +1,38 @@
 package com.bluedragonmc.puffin.services
 
+import com.bluedragonmc.api.grpc.CommonTypes
+import com.bluedragonmc.api.grpc.GsClient
+import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.LUCKPERMS_API_URL
 import com.bluedragonmc.puffin.app.Env.MONGO_CONNECTION_STRING
 import com.bluedragonmc.puffin.app.Puffin
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.google.common.net.InetAddresses
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.google.inject.Inject
+import com.google.inject.Singleton
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.client.model.Filters
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.bson.Document
+import org.bson.conversions.Bson
+import org.bson.types.Binary
 import org.litote.kmongo.coroutine.CoroutineClient
 import org.litote.kmongo.coroutine.CoroutineCollection
 import org.litote.kmongo.coroutine.CoroutineDatabase
 import org.litote.kmongo.coroutine.coroutine
 import org.litote.kmongo.reactivestreams.KMongo
+import java.io.Closeable
 import java.io.File
+import java.net.Inet4Address
+import java.net.URL
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -28,17 +40,19 @@ import java.util.concurrent.TimeUnit
 /**
  * Connects to MongoDB to fetch player names, UUIDs, colors, etc. Caches responses in memory.
  */
-class DatabaseConnection(app: Puffin) : Service(app) {
+@Singleton
+class DatabaseConnection : Service() {
 
-    private lateinit var mongoClient: CoroutineClient
-    private lateinit var httpClient: OkHttpClient
+    private val mongoClient: CoroutineClient
+    private val httpClient: OkHttpClient
 
     private val cacheControl = CacheControl.Builder().maxAge(30, TimeUnit.SECONDS).build()
     private val gson = Gson()
 
-    private lateinit var db: CoroutineDatabase
-    private lateinit var playersCollection: CoroutineCollection<Document>
-    private lateinit var mapsCollection: CoroutineCollection<Document>
+    private val db: CoroutineDatabase
+    private val playersCollection: CoroutineCollection<Document>
+    private val mapDataCollection: CoroutineCollection<MapData>
+    private val mapConfigCollection: CoroutineCollection<Document>
 
     private val builder = Caffeine.newBuilder()
         .maximumSize(10_000)
@@ -71,7 +85,41 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         }
     }
 
-    private fun evictCachesForPlayer(player: UUID) {
+    suspend fun getMapData(id: String) =
+        mapDataCollection.findOneById(id)?.data
+
+    suspend fun getMapConfig(id: String) =
+        mapConfigCollection.findOne(Filters.eq("world.id", id))
+
+    suspend fun getAvailableMaps(gameName: String?, mode: String?, whitelistedPlayers: Iterable<UUID>?): List<CommonTypes.MapSource> {
+        val filters = mutableListOf<Bson>()
+        if (gameName != null || mode != null) {
+            val doc = Document()
+            if (gameName != null) doc["name"] = gameName
+            if (mode != null) doc["mode"] = mode
+            filters += Filters.elemMatch("world.games", doc)
+        }
+        if (whitelistedPlayers != null) {
+            for (player in whitelistedPlayers) {
+                filters += Filters.eq("whitelist", player.toString())
+            }
+        }
+        // TODO do not allow player to join a whitelisted map if they aren't on the whitelist
+
+        val docs = mapConfigCollection.find(*filters.toTypedArray()).toList()
+
+        return docs.map { doc ->
+            val mapId = doc.getString("_id")
+            CommonTypes.MapSource.newBuilder()
+                .setMapId(mapId)
+                .setMapConfig(doc.toJson())
+                .setMapFormat(CommonTypes.MapFormat.POLAR)
+                .setMapUrl("${Inet4Address.getLocalHost().hostName}:${Env.MAP_SERVICE_PORT}/map/$mapId/download")
+                .build()
+        }
+    }
+
+    fun evictCachesForPlayer(player: UUID) {
         val username = usernameCache.getIfPresent(player)
         if (username != null) {
             uuidCache.invalidate(username)
@@ -80,7 +128,7 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         userColorCache.invalidate(player)
     }
 
-    override fun initialize() {
+    init {
         this.httpClient = OkHttpClient.Builder()
             .cache(okhttp3.Cache(File("/tmp/okhttp"), 50_000_000))
             .addNetworkInterceptor { chain ->
@@ -102,9 +150,8 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         db = mongoClient.getDatabase("bluedragon")
 
         playersCollection = db.getCollection("players")
-        mapsCollection = db.getCollection("maps")
-
-        app.get(PlayerTracker::class).onLogout(::evictCachesForPlayer)
+        mapDataCollection = db.getCollection("mapData")
+        mapConfigCollection = db.getCollection("mapConfig")
     }
 
     override fun close() {
@@ -119,4 +166,7 @@ class DatabaseConnection(app: Puffin) : Service(app) {
         uuidCache.invalidateAll()
         uuidCache.cleanUp()
     }
+
+    @Serializable
+    data class MapData(val data: ByteArray)
 }

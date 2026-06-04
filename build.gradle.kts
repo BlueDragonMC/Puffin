@@ -3,7 +3,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "2.1.10"
-    kotlin("plugin.serialization") version "2.1.10"
+    kotlin("plugin.serialization") version "2.3.0"
     id("com.gradleup.shadow") version "9.0.1"
     application
 }
@@ -32,13 +32,15 @@ dependencies {
     implementation("org.litote.kmongo:kmongo:5.2.1")
     implementation("org.litote.kmongo:kmongo-coroutine:5.2.1")
 
+    implementation("com.google.inject:guice:7.0.0:classes")
+    implementation("org.ow2.asm:asm:9.9.1")
     implementation("com.github.ben-manes.caffeine:caffeine:3.2.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 
-    implementation("com.github.bluedragonmc:rpc:d40ac743b5")
-//    implementation("com.bluedragonmc:rpc:1.0")
-    implementation("com.tananaev:json-patch:1.2")
+//    implementation("com.github.bluedragonmc:rpc:d40ac743b5")
+    implementation("com.bluedragonmc:rpc:1.0")
+    implementation("com.github.java-json-tools:json-patch:1.13")
 
     implementation("io.grpc:grpc-services:$grpcVersion")
     implementation("io.grpc:grpc-netty:$grpcVersion")
@@ -49,19 +51,28 @@ dependencies {
     implementation("org.java-websocket:Java-WebSocket:1.6.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    implementation("org.spongepowered:configurate-yaml:4.2.0")
 }
 
 tasks.test {
     useJUnitPlatform()
 }
 
-tasks.withType<KotlinCompile> {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
+kotlin {
+    jvmToolchain {
+        languageVersion.set(JavaLanguageVersion.of(25))
+    }
+}
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(25))
     }
 }
 
 tasks.shadowJar {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
 }
 
