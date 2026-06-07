@@ -24,7 +24,7 @@ dependencies {
     implementation("ch.qos.logback:logback:0.5")
     implementation("ch.qos.logback:logback-classic:1.5.17")
 
-    implementation("io.kubernetes:client-java:23.0.0")
+    implementation("io.kubernetes:client-java:26.0.0")
 
     implementation("org.litote.kmongo:kmongo:5.2.1")
     implementation("org.litote.kmongo:kmongo-coroutine:5.2.1")

@@ -13,17 +13,12 @@ import com.google.inject.Inject
 import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import io.grpc.Deadline
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.read
-import kotlin.concurrent.write
 
 interface IQueueService {
     fun getServers(): List<QueueService.GameServer>
@@ -36,7 +31,7 @@ interface IQueueService {
     fun removeFromQueue(player: UUID): Boolean
 
     suspend fun processQueue()
-    fun getBestAvailableInstance(
+    suspend fun getBestAvailableInstance(
         gameState: EnumGameState,
         gameType: CommonTypes.GameType,
         partySize: Int
@@ -63,40 +58,64 @@ class QueueService @Inject constructor(
     val k8sServiceDiscovery: IK8sServiceDiscovery,
     val gameServerManager: IGameServerManager
 ) : Service(), IQueueService {
-    /**
-     * A set of parties in the queue, sorted first by decreasing party size
-     * and then by how specific their queue request is.
-     */
-    private val queuedParties =
-        TreeSet<QueuedParty>(Comparator.comparingInt<QueuedParty> { -it.players.size }.thenComparingInt {
-            var i = 0
-            if (it.gameType.hasMapId()) i++
-            if (it.gameType.hasMode()) i++
-            i
-        })
-    private val queuedPartiesLock = ReentrantReadWriteLock()
 
-    private val servers = mutableListOf<GameServer>()
-    private val serversLock = ReentrantReadWriteLock()
+    // The actual data is kept separate from its usages to require that the locking methods be used when accessing it
+    private class Data {
+        /**
+         * A set of parties in the queue, sorted first by decreasing party size
+         * and then by how specific their queue request is.
+         */
+        private val queuedParties =
+            TreeSet<QueuedParty>(Comparator.comparingInt<QueuedParty> { -it.players.size }.thenComparingInt {
+                var i = 0
+                if (it.gameType.hasMapId()) i++
+                if (it.gameType.hasMode()) i++
+                i
+            })
 
-    override fun getServers(): List<GameServer> = serversLock.read { ArrayList(servers) }
-    override fun getServer(serverName: String) = serversLock.read { servers.find { it.name == serverName } }
-    override fun getGame(gameId: String): Game? = serversLock.read {
-        for (server in servers) {
-            for (game in server.games) {
-                if (game.id == gameId) return game
+        private val servers = mutableListOf<GameServer>()
+
+        private val queuedPartiesMutex = Mutex()
+        private val serversMutex = Mutex()
+
+        suspend inline fun <R> withParties(block: suspend (MutableSet<QueuedParty>) -> R): R =
+            queuedPartiesMutex.withLock {
+                block(queuedParties)
             }
+
+        fun <R> withPartiesBlocking(block: suspend (MutableSet<QueuedParty>) -> R): R =
+            runBlocking { withParties(block) }
+
+        suspend inline fun <R> withServers(block: suspend (MutableList<GameServer>) -> R): R = serversMutex.withLock {
+            block(servers)
         }
-        return null
+
+        fun <R> withServersBlocking(block: suspend (MutableList<GameServer>) -> R): R =
+            runBlocking { withServers(block) }
     }
 
-    override fun getServerOfGame(gameId: String): String? = serversLock.read {
+    private val data = Data()
+
+    override fun getServers(): List<GameServer> = data.withServersBlocking { servers -> ArrayList(servers) }
+    override fun getServer(serverName: String) =
+        data.withServersBlocking { servers -> servers.find { it.name == serverName } }
+
+    override fun getGame(gameId: String): Game? = data.withServersBlocking { servers ->
         for (server in servers) {
             for (game in server.games) {
-                if (game.id == gameId) return server.name
+                if (game.id == gameId) return@withServersBlocking game
             }
         }
-        return null
+        null
+    }
+
+    override fun getServerOfGame(gameId: String): String? = data.withServersBlocking { servers ->
+        for (server in servers) {
+            for (game in server.games) {
+                if (game.id == gameId) return@withServersBlocking server.name
+            }
+        }
+        null
     }
 
     private val instanceUpdateCallbacks = mutableListOf<(gameId: String) -> Unit>()
@@ -106,7 +125,7 @@ class QueueService @Inject constructor(
     }
 
     override fun setGameState(gameId: String, newState: CommonTypes.GameState) {
-        serversLock.write {
+        data.withServersBlocking { servers ->
             outer@ for ((i, server) in servers.withIndex()) {
                 for (game in server.games) {
                     if (game.id == gameId) {
@@ -118,133 +137,197 @@ class QueueService @Inject constructor(
                                     state = newState.gameState
                                 ) else g
                             })
-
-                        instanceUpdateCallbacks.forEach { it(gameId) }
-
                         break@outer
                     }
                 }
             }
         }
+        instanceUpdateCallbacks.forEach { it(gameId) }
         Puffin.IO.launch { processQueue() }
     }
 
     override fun addToQueue(party: QueuedParty) {
-        queuedPartiesLock.write {
-            queuedParties.add(party)
+        Puffin.IO.launch {
+            val maps = mapService.getAvailableMaps(
+                party.gameType.name,
+                if (party.gameType.hasMode()) party.gameType.mode else null,
+                if (party.gameType.hasMapId()) party.gameType.mapId else null,
+                party.players
+            )
+
+            if (maps.isEmpty()) {
+                // No suitable maps exist for the party; no point in adding them to the queue
+                playerTracker.sendChatAsync(
+                    party.players,
+                    "<red><lang:queue.adding.failed:'${party.gameType.name}':'<lang:queue.adding.failed.invalid_map>'>"
+                )
+                return@launch
+            }
+
+            data.withParties { queuedParties ->
+                queuedParties.add(party)
+            }
+
+            processQueue()
         }
-        Puffin.IO.launch { processQueue() }
     }
 
     override fun removeFromQueue(player: UUID) =
-        queuedPartiesLock.write { queuedParties.removeIf { player in it.players } }
+        data.withPartiesBlocking { queuedParties -> queuedParties.removeIf { player in it.players } }
+
+    private suspend fun removeAllParties(shouldRemove: suspend (QueuedParty) -> Boolean) {
+        val collection = data.withParties { parties -> ArrayList(parties) }
+        val elementsToRemove = coroutineScope {
+            collection.map { async { if (shouldRemove(it)) it else null } }
+                .awaitAll()
+                .filterNotNullTo(mutableSetOf())
+        }
+        data.withParties { parties ->
+            parties.removeAll(elementsToRemove)
+        }
+    }
 
     private val processQueueMutex = Mutex()
     private val processQueueRateLimiter = Utils.RollingWindowRateLimiter(maxRequests = 5, windowMillis = 1_000)
     override suspend fun processQueue() {
         processQueueRateLimiter.rateLimit()
         processQueueMutex.withLock {
+            val servers: List<GameServer> = data.withServers { servers -> servers.toList() }
             val jobs = mutableListOf<Job>()
-            serversLock.read {
-                val games = servers.flatMap { it.games }
-                // game id -> effective player count
-                val effectivePlayerCounts = mutableMapOf<String, Int>()
-                val effectiveGames = ArrayList(games)
+            val games = servers.flatMap { it.games }
+            // game id -> effective player count
+            val effectivePlayerCounts = mutableMapOf<String, Int>()
+            val effectiveGames = ArrayList(games)
+            val mapSources = mutableListOf<CommonTypes.MapSource>()
 
-                fun sendPartyToInstance(party: QueuedParty, game: Game) {
-                    effectivePlayerCounts[game.id] =
-                        effectivePlayerCounts.getOrDefault(game.id, game.playerCount) + party.players.size
-                    party.players.forEach { player ->
-                        jobs += Puffin.IO.launch {
-                            sendPlayerToInstance(player, game.id)
-                        }
+            fun sendPartyToInstance(party: QueuedParty, game: Game) {
+                logger.info("Sending queued party $party to game ${game.id}.")
+                effectivePlayerCounts[game.id] =
+                    effectivePlayerCounts.getOrDefault(game.id, game.playerCount) + party.players.size
+                party.players.forEach { player ->
+                    jobs += Puffin.IO.launch {
+                        sendPlayerToInstance(player, game.id)
                     }
                 }
+            }
 
-                queuedParties.removeAll { party ->
-                    party.attempts++
-                    if (party.attempts > 5) {
+            removeAllParties { party ->
+                party.attempts++
+                if (party.attempts > 5) {
+                    playerTracker.sendChatAsync(
+                        party.players,
+                        "<red><lang:queue.removed.reason:'<lang:queue.removed.reason.timeout>'>"
+                    )
+                    return@removeAllParties true
+                }
+                val startingGame = effectiveGames.firstOrNull { game ->
+                    gameMatches(
+                        game,
+                        effectivePlayerCounts.getOrDefault(game.id, game.playerCount),
+                        EnumGameState.STARTING,
+                        party
+                    )
+                }
+                if (startingGame != null) {
+                    sendPartyToInstance(party, startingGame)
+                    return@removeAllParties true
+                }
+
+                val waitingGame = effectiveGames.firstOrNull { game ->
+                    gameMatches(
+                        game,
+                        effectivePlayerCounts.getOrDefault(game.id, game.playerCount),
+                        EnumGameState.WAITING,
+                        party
+                    )
+                }
+                if (waitingGame != null) {
+                    sendPartyToInstance(party, waitingGame)
+                    return@removeAllParties true
+                }
+
+                val initializingGame = effectiveGames.firstOrNull { game ->
+                    gameMatches(
+                        game,
+                        effectivePlayerCounts.getOrDefault(game.id, game.playerCount),
+                        EnumGameState.INITIALIZING,
+                        party
+                    )
+                }
+                if (initializingGame != null) {
+                    effectivePlayerCounts[initializingGame.id] = effectivePlayerCounts.getOrDefault(
+                        initializingGame.id, initializingGame.playerCount
+                    ) + party.players.size
+                } else {
+                    // Find a map that satisfies the party's requests and has all of its players whitelisted
+                    val mapSource = mapService.getAvailableMaps(
+                        party.gameType.name,
+                        if (party.gameType.hasMode()) party.gameType.mode else null,
+                        if (party.gameType.hasMapId()) party.gameType.mapId else null,
+                        party.players
+                    ).randomOrNull()
+
+                    if (mapSource == null) {
                         playerTracker.sendChatAsync(
                             party.players,
-                            "<red><lang:queue.removed.reason:'<lang:queue.removed.reason.timeout>'>"
+                            "<red><lang:queue.removed.reason:'<lang:queue.adding.failed.invalid_map>'>"
                         )
-                        return@removeAll true
-                    }
-                    val startingGame = effectiveGames.firstOrNull { game ->
-                        gameMatches(
-                            game,
-                            effectivePlayerCounts.getOrDefault(game.id, game.playerCount),
-                            EnumGameState.STARTING,
-                            party
-                        )
-                    }
-                    if (startingGame != null) {
-                        sendPartyToInstance(party, startingGame)
-                        return@removeAll true
+                        return@removeAllParties true
                     }
 
-                    val waitingGame = effectiveGames.firstOrNull { game ->
-                        gameMatches(
-                            game,
-                            effectivePlayerCounts.getOrDefault(game.id, game.playerCount),
-                            EnumGameState.WAITING,
-                            party
-                        )
-                    }
-                    if (waitingGame != null) {
-                        sendPartyToInstance(party, waitingGame)
-                        return@removeAll true
-                    }
-
-                    val initializingGame = effectiveGames.firstOrNull { game ->
-                        gameMatches(
-                            game,
-                            effectivePlayerCounts.getOrDefault(game.id, game.playerCount),
-                            EnumGameState.INITIALIZING,
-                            party
-                        )
-                    }
-                    if (initializingGame != null) {
-                        effectivePlayerCounts[initializingGame.id] = effectivePlayerCounts.getOrDefault(
-                            initializingGame.id, initializingGame.playerCount
-                        ) + party.players.size
-                    } else {
-                        effectiveGames += Game("", party.gameType, party.players.size, 8, EnumGameState.INITIALIZING)
-                    }
-                    return@removeAll false
+                    effectiveGames += Game("", party.gameType, party.players.size, 8, EnumGameState.INITIALIZING)
+                    mapSources += mapSource
                 }
+                return@removeAllParties false
+            }
 
-                val newGames =
-                    effectiveGames.takeLast(effectiveGames.size - games.size).take(5) // 5 games can start per cycle
-                // server id -> number of games on it
-                val effectiveGameCounts = mutableMapOf<String, Int>()
-                servers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
-                newGames.forEach { game ->
-                    jobs += Puffin.IO.launch {
-                        val id = effectiveGameCounts.minBy { it.value }.key
-                        effectiveGameCounts[id] = effectiveGameCounts[id]!! + 1
-                        k8sServiceDiscovery.getStubToServer(id)!!
-                            .withDeadline(Deadline.after(5, TimeUnit.SECONDS))
-                            .createInstance(
-                                GsClient.CreateInstanceRequest.newBuilder().setGame(game.gameType.name).setMapSource(
-                                    mapService.getAvailableMaps(
-                                        game.gameType.name,
-                                        if (game.gameType.hasMode()) game.gameType.mode else null,
-                                        null
-                                    ).random()
-                                ).setMode(game.gameType.mode).build()
-                            )
-                    }
+            val newGames =
+                effectiveGames.takeLast(effectiveGames.size - games.size).take(5) // 5 games can start per cycle
+            // server id -> number of games on it
+            val effectiveGameCounts = mutableMapOf<String, Int>()
+            servers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
+            newGames.forEachIndexed { i, game ->
+                val mapSource = mapSources[i]
+                jobs += Puffin.IO.launch {
+                    val id = effectiveGameCounts.minBy { it.value }.key
+                    effectiveGameCounts[id] = effectiveGameCounts[id]!! + 1
+                    logger.info("Creating instance with game type ${game.gameType} on server $id.")
+                    k8sServiceDiscovery.getStubToServer(id)!!
+                        .withDeadline(Deadline.after(5, TimeUnit.SECONDS))
+                        .createInstance(
+                            GsClient.CreateInstanceRequest.newBuilder()
+                                .setGame(game.gameType.name)
+                                .setMapSource(mapSource)
+                                .setMode(game.gameType.mode)
+                                .build()
+                        )
                 }
             }
             jobs.joinAll()
         }
     }
 
-    private fun gameMatches(
+    private suspend fun gameMatches(
         game: Game, effectivePlayerCount: Int, state: EnumGameState, party: QueuedParty
     ): Boolean {
-        return game.state == state && game.gameType matches party.gameType && (game.maxPlayers - effectivePlayerCount) >= party.players.size
+        return game.state == state
+                && game.gameType matches party.gameType
+                && (game.maxPlayers - effectivePlayerCount) >= party.players.size
+                && allPlayersWhitelistedForMap(party.players, game.gameType)
+    }
+
+    private suspend fun allPlayersWhitelistedForMap(
+        players: Collection<UUID>,
+        gameType: CommonTypes.GameType
+    ): Boolean {
+        val maps = mapService.getAvailableMaps(
+            gameType.name,
+            if (gameType.hasMode()) gameType.mode else null,
+            if (gameType.hasMapId()) gameType.mapId else null,
+            players
+        )
+
+        return maps.isNotEmpty()
     }
 
     data class GameServer(
@@ -267,8 +350,12 @@ class QueueService @Inject constructor(
         var attempts = 0
     }
 
-    override fun getBestAvailableInstance(gameState: EnumGameState, gameType: CommonTypes.GameType, partySize: Int) =
-        serversLock.read {
+    override suspend fun getBestAvailableInstance(
+        gameState: EnumGameState,
+        gameType: CommonTypes.GameType,
+        partySize: Int
+    ) =
+        data.withServers { servers ->
             servers.flatMap { it.games }
                 .filter { game -> game.state == gameState && game.gameType matches gameType && game.emptySlots >= partySize }
                 .minByOrNull { it.emptySlots }
@@ -278,21 +365,21 @@ class QueueService @Inject constructor(
         name == other.name && (!other.hasMode() || mode == other.mode) && (!other.hasMapId() || mapId == other.mapId)
 
     override fun removeServer(name: String) {
-        serversLock.write {
+        data.withServersBlocking { servers ->
             servers.removeIf { it.name == name }
         }
         Puffin.IO.launch { processQueue() }
     }
 
     override fun addServer(name: String) {
-        serversLock.write {
+        data.withServersBlocking { servers ->
             servers.add(GameServer(name, emptyList()))
         }
         Puffin.IO.launch { processQueue() }
     }
 
     override fun removeGame(serverName: String, gameId: String) {
-        serversLock.write {
+        data.withServersBlocking { servers ->
             for ((i, server) in servers.withIndex()) {
                 if (server.name == serverName) {
                     servers[i] = server.copy(games = server.games.filter { it.id != gameId })
@@ -303,7 +390,7 @@ class QueueService @Inject constructor(
     }
 
     override fun getGamesMatching(gameType: CommonTypes.GameType) =
-        serversLock.read { servers.flatMap { it.games.filter { game -> game.gameType matches gameType } } }
+        data.withServersBlocking { servers -> servers.flatMap { it.games.filter { game -> game.gameType matches gameType } } }
 
     override fun addGame(
         serverName: String,
@@ -311,7 +398,7 @@ class QueueService @Inject constructor(
         gameType: CommonTypes.GameType,
         gameState: CommonTypes.GameState
     ) {
-        serversLock.write {
+        data.withServersBlocking { servers ->
             for ((i, server) in servers.withIndex()) {
                 if (server.name == serverName) {
                     val newList = server.games.toMutableList()
@@ -331,7 +418,7 @@ class QueueService @Inject constructor(
         Puffin.IO.launch { processQueue() }
     }
 
-    override fun getGames() = serversLock.read { servers.flatMap { it.games } }
+    override fun getGames() = data.withServersBlocking { servers -> servers.flatMap { it.games } }
 
     override val gameStateService by lazy { GameStateService() }
 

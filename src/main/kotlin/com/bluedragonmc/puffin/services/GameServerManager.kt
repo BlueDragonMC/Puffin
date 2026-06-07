@@ -326,7 +326,7 @@ class GameServerManager @Inject constructor(
                 val response = stub.createInstance(
                     GsClient.CreateInstanceRequest.newBuilder()
                         .setGame("Lobby")
-                        .setMapSource(mapsService.getAvailableMaps("Lobby", null, null).random())
+                        .setMapSource(mapsService.getAvailableMaps("Lobby", null, null, null).random())
                         .build()
                 )
 

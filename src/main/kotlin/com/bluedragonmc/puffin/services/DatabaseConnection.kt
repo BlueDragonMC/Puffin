@@ -86,17 +86,20 @@ class DatabaseConnection : Service() {
     suspend fun putMapData(id: String, data: ByteArray) =
         mapDataCollection.updateOneById(id = id, update = MapData(data), options = upsert())
 
-    suspend fun getMapConfig(id: String) = mapConfigCollection.findOne(Filters.eq("world.id", id))
+    suspend fun getMapConfig(id: String) = mapConfigCollection.findOneById(id)
 
     suspend fun putMapConfig(id: String, data: String): UpdateResult =
         mapConfigCollection.updateOne(
-            filter = Filters.eq("world.id", id),
+            filter = Filters.eq("_id", id),
             update = Document("\$set", Document.parse(data)),
             options = upsert()
         )
 
-    suspend fun getAvailableMaps(gameName: String?, mode: String?, whitelistedPlayers: Iterable<UUID>?): List<CommonTypes.MapSource> {
+    suspend fun getAvailableMaps(gameName: String?, mode: String?, mapId: String?, whitelistedPlayers: Iterable<UUID>?): List<CommonTypes.MapSource> {
         val filters = mutableListOf<Bson>()
+        if (mapId != null) {
+            filters += Filters.eq("_id", mapId)
+        }
         if (gameName != null || mode != null) {
             val doc = Document()
             if (gameName != null) doc["name"] = gameName
@@ -104,23 +107,29 @@ class DatabaseConnection : Service() {
             filters += Filters.elemMatch("world.games", doc)
         }
         if (whitelistedPlayers != null) {
+            val clause = mutableListOf<Bson>()
             for (player in whitelistedPlayers) {
-                filters += Filters.eq("whitelist", player.toString())
+                clause += Filters.eq("whitelist", player.toString())
             }
+            filters += Filters.or(
+                Filters.eq("whitelist", null),
+                Filters.and(clause)
+            )
         }
-        // TODO do not allow player to join a whitelisted map if they aren't on the whitelist
 
         val docs = mapConfigCollection.find(*filters.toTypedArray()).toList()
 
-        return docs.map { doc ->
-            val mapId = doc.getString("_id")
-            CommonTypes.MapSource.newBuilder()
-                .setMapId(mapId)
-                .setMapConfig(doc.toJson())
-                .setMapFormat(CommonTypes.MapFormat.POLAR)
-                .setMapUrl("http://${Inet4Address.getLocalHost().hostAddress}:${Env.MAP_SERVICE_PORT}/map/$mapId/data")
-                .build()
-        }
+        return docs.map { doc -> createMapSourceFromDocument(doc) }
+    }
+
+    private fun createMapSourceFromDocument(doc: Document): CommonTypes.MapSource {
+        val mapId = doc.getString("_id")
+        return CommonTypes.MapSource.newBuilder()
+            .setMapId(mapId)
+            .setMapConfig(doc.toJson())
+            .setMapFormat(CommonTypes.MapFormat.POLAR)
+            .setMapUrl("http://${Inet4Address.getLocalHost().hostAddress}:${Env.MAP_SERVICE_PORT}/map/$mapId/data")
+            .build()
     }
 
     fun evictCachesForPlayer(player: UUID) {
