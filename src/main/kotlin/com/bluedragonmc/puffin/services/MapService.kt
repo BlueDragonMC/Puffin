@@ -8,8 +8,8 @@ import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
 import com.google.inject.Inject
 import com.google.inject.Singleton
+import com.google.protobuf.Empty
 import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.launch
 import org.spongepowered.configurate.ConfigurationNode
@@ -84,27 +84,74 @@ class MapService @Inject constructor(val db: DatabaseConnection) : Service() {
                 )
             ).build()
         }
+
+        override suspend fun updateMapConfig(request: Map.UpdateMapConfigRequest): Empty {
+            db.putMapConfig(request.mapId, request.configJson)
+            return Empty.getDefaultInstance()
+        }
     }
 
     init {
         val server = HttpServer.create(InetSocketAddress("0.0.0.0", Env.MAP_SERVICE_PORT), 0)
-        server.createContext("/map/", object : HttpHandler {
-            override fun handle(exchange: HttpExchange) {
-                val mapId = exchange.requestURI.path.split("/").last()
-                Puffin.IO.launch {
-                    val data = db.getMapData(mapId)
-                    if (data == null) {
-                        exchange.sendResponseHeaders(404, 0)
-                        exchange.responseBody.close()
-                        return@launch
+        server.createContext("/map/") { exchange ->
+            Puffin.IO.launch {
+                exchange.use { exchange ->
+                    handleRequest(exchange)
+                }
+            }
+        }
+        server.start()
+    }
+
+    private suspend fun handleRequest(exchange: HttpExchange) {
+        val method = exchange.requestMethod
+        logger.info("Handling map request: $method ${exchange.requestURI}")
+        val tokens = exchange.requestURI.path.split("/")
+        val resourceType = tokens[tokens.lastIndex]
+        val mapId = tokens[tokens.lastIndex - 1]
+        when (method) {
+            "GET" -> {
+                when (resourceType) {
+                    "data" -> {
+                        val data = db.getMapData(mapId)
+                        if (data == null) {
+                            exchange.sendResponseHeaders(404, -1)
+                            return
+                        }
+                        if (data.isEmpty()) {
+                            exchange.sendResponseHeaders(200, -1)
+                            return
+                        }
+                        exchange.sendResponseHeaders(200, data.size.toLong())
+                        exchange.responseBody.use { it.write(data) }
                     }
-                    exchange.sendResponseHeaders(200, data.size.toLong())
-                    exchange.responseBody.write(data)
-                    exchange.responseBody.close()
+                    else -> {
+                        exchange.sendResponseHeaders(404, -1)
+                    }
                 }
             }
 
-        })
-        server.start()
+            "POST" -> {
+                when (resourceType) {
+                    "data" -> {
+                        // TODO it might be bad to use readAllBytes for a large amount of data
+                        val bytes = exchange.requestBody.readAllBytes()
+                        val result = db.putMapData(mapId, bytes)
+                        if (result.wasAcknowledged()) {
+                            exchange.sendResponseHeaders(200, -1)
+                        } else {
+                            exchange.sendResponseHeaders(500, -1)
+                        }
+                    }
+                    else -> {
+                        exchange.sendResponseHeaders(404, -1)
+                    }
+                }
+            }
+
+            else -> {
+                exchange.sendResponseHeaders(405, -1)
+            }
+        }
     }
 }

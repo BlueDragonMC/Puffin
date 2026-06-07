@@ -1,6 +1,3 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
     kotlin("jvm") version "2.1.10"
     kotlin("plugin.serialization") version "2.3.0"
@@ -38,8 +35,8 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 
-//    implementation("com.github.bluedragonmc:rpc:d40ac743b5")
-    implementation("com.bluedragonmc:rpc:1.0")
+    implementation("com.github.bluedragonmc:rpc:eddbeed696")
+//    implementation("com.bluedragonmc:rpc:1.0")
     implementation("com.github.java-json-tools:json-patch:1.13")
 
     implementation("io.grpc:grpc-services:$grpcVersion")

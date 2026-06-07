@@ -1,21 +1,18 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.CommonTypes
-import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.LUCKPERMS_API_URL
 import com.bluedragonmc.puffin.app.Env.MONGO_CONNECTION_STRING
-import com.bluedragonmc.puffin.app.Puffin
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
-import com.google.common.net.InetAddresses
 import com.google.gson.Gson
 import com.google.gson.JsonObject
-import com.google.inject.Inject
 import com.google.inject.Singleton
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.client.model.Filters
+import com.mongodb.client.result.UpdateResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import okhttp3.CacheControl
@@ -23,16 +20,14 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.bson.Document
 import org.bson.conversions.Bson
-import org.bson.types.Binary
 import org.litote.kmongo.coroutine.CoroutineClient
 import org.litote.kmongo.coroutine.CoroutineCollection
 import org.litote.kmongo.coroutine.CoroutineDatabase
 import org.litote.kmongo.coroutine.coroutine
 import org.litote.kmongo.reactivestreams.KMongo
-import java.io.Closeable
+import org.litote.kmongo.upsert
 import java.io.File
 import java.net.Inet4Address
-import java.net.URL
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -88,8 +83,17 @@ class DatabaseConnection : Service() {
     suspend fun getMapData(id: String) =
         mapDataCollection.findOneById(id)?.data
 
-    suspend fun getMapConfig(id: String) =
-        mapConfigCollection.findOne(Filters.eq("world.id", id))
+    suspend fun putMapData(id: String, data: ByteArray) =
+        mapDataCollection.updateOneById(id = id, update = MapData(data), options = upsert())
+
+    suspend fun getMapConfig(id: String) = mapConfigCollection.findOne(Filters.eq("world.id", id))
+
+    suspend fun putMapConfig(id: String, data: String): UpdateResult =
+        mapConfigCollection.updateOne(
+            filter = Filters.eq("world.id", id),
+            update = Document("\$set", Document.parse(data)),
+            options = upsert()
+        )
 
     suspend fun getAvailableMaps(gameName: String?, mode: String?, whitelistedPlayers: Iterable<UUID>?): List<CommonTypes.MapSource> {
         val filters = mutableListOf<Bson>()
@@ -114,7 +118,7 @@ class DatabaseConnection : Service() {
                 .setMapId(mapId)
                 .setMapConfig(doc.toJson())
                 .setMapFormat(CommonTypes.MapFormat.POLAR)
-                .setMapUrl("${Inet4Address.getLocalHost().hostName}:${Env.MAP_SERVICE_PORT}/map/$mapId/download")
+                .setMapUrl("http://${Inet4Address.getLocalHost().hostAddress}:${Env.MAP_SERVICE_PORT}/map/$mapId/data")
                 .build()
         }
     }
