@@ -20,6 +20,27 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
 
+/**
+ * The maximum number of games that can be created in one invocation of [IQueueService.processQueue]
+ */
+private const val MAX_GAMES_PER_CYCLE = 5
+
+/**
+ * The number of times [IQueueService.processQueue] can be called within [QUEUE_LOOP_RATE_LIMIT_PERIOD_MS].
+ * Calls beyond this rate will wait until a previous call has exited the window before running.
+ */
+private const val QUEUE_LOOP_RATE_LIMIT = 1
+
+/**
+ * The length of the window that the rate limit is enforced on
+ */
+private const val QUEUE_LOOP_RATE_LIMIT_PERIOD_MS: Long = 1_000
+
+/**
+ * The maximum number of queue cycles that a party will remain in the queue for before being removed.
+ */
+private const val QUEUE_PARTY_MAX_ATTEMPTS = 5
+
 interface IQueueService {
     fun getServers(): List<QueueService.GameServer>
     fun getServer(serverName: String): QueueService.GameServer?
@@ -125,25 +146,33 @@ class QueueService @Inject constructor(
     }
 
     override fun setGameState(gameId: String, newState: CommonTypes.GameState) {
+        var old: Game? = null
+        var new: Game? = null
         data.withServersBlocking { servers ->
             outer@ for ((i, server) in servers.withIndex()) {
                 for (game in server.games) {
                     if (game.id == gameId) {
                         servers[i] =
                             server.copy(games = server.games.map { g ->
-                                if (g.id == gameId) g.copy(
-                                    playerCount = newState.maxSlots - newState.openSlots,
-                                    maxPlayers = newState.maxSlots,
-                                    state = newState.gameState
-                                ) else g
+                                if (g.id == gameId) {
+                                    old = g
+                                    new = g.copy(
+                                        playerCount = newState.maxSlots - newState.openSlots,
+                                        maxPlayers = newState.maxSlots,
+                                        state = newState.gameState
+                                    )
+                                    new
+                                } else g
                             })
                         break@outer
                     }
                 }
             }
         }
-        instanceUpdateCallbacks.forEach { it(gameId) }
-        Puffin.IO.launch { processQueue() }
+        if (old != new) {
+            instanceUpdateCallbacks.forEach { it(gameId) }
+            Puffin.IO.launch { processQueue() }
+        }
     }
 
     override fun addToQueue(party: QueuedParty) {
@@ -188,10 +217,18 @@ class QueueService @Inject constructor(
     }
 
     private val processQueueMutex = Mutex()
-    private val processQueueRateLimiter = Utils.RollingWindowRateLimiter(maxRequests = 5, windowMillis = 1_000)
+    private val processQueueRateLimiter = Utils.RollingWindowRateLimiter(
+        maxRequests = QUEUE_LOOP_RATE_LIMIT,
+        windowMillis = QUEUE_LOOP_RATE_LIMIT_PERIOD_MS
+    )
+
     override suspend fun processQueue() {
         processQueueRateLimiter.rateLimit()
         processQueueMutex.withLock {
+            val isEmpty = data.withParties { parties ->
+                parties.isEmpty()
+            }
+            if (isEmpty) return@withLock
             val servers: List<GameServer> = data.withServers { servers -> servers.toList() }
             val jobs = mutableListOf<Job>()
             val games = servers.flatMap { it.games }
@@ -213,7 +250,7 @@ class QueueService @Inject constructor(
 
             removeAllParties { party ->
                 party.attempts++
-                if (party.attempts > 5) {
+                if (party.attempts > QUEUE_PARTY_MAX_ATTEMPTS) {
                     playerTracker.sendChatAsync(
                         party.players,
                         "<red><lang:queue.removed.reason:'<lang:queue.removed.reason.timeout>'>"
@@ -282,7 +319,7 @@ class QueueService @Inject constructor(
             }
 
             val newGames =
-                effectiveGames.takeLast(effectiveGames.size - games.size).take(5) // 5 games can start per cycle
+                effectiveGames.takeLast(effectiveGames.size - games.size).take(MAX_GAMES_PER_CYCLE)
             // server id -> number of games on it
             val effectiveGameCounts = mutableMapOf<String, Int>()
             servers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
@@ -298,7 +335,7 @@ class QueueService @Inject constructor(
                             GsClient.CreateInstanceRequest.newBuilder()
                                 .setGame(game.gameType.name)
                                 .setMapSource(mapSource)
-                                .setMode(game.gameType.mode)
+                                .apply { if (game.gameType.hasMode()) setMode(game.gameType.mode) }
                                 .build()
                         )
                 }
@@ -474,39 +511,29 @@ class QueueService @Inject constructor(
     override val queueService by lazy { QueueService() }
 
     inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
-        override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty = Utils.handleRPC {
+        override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty = handleRPC {
             val playerUuid = UUID.fromString(request.playerUuid)
             val party = partyManager.partyOf(playerUuid)?.getMembers() ?: listOf(playerUuid)
-            // check waiting instances
-            val waitingInstance =
-                getBestAvailableInstance(CommonTypes.EnumGameState.WAITING, request.gameType, party.size)
-            if (waitingInstance != null) {
-                party.forEach { player ->
-                    sendPlayerToInstance(player, waitingInstance.id)
-                }
-                return Empty.getDefaultInstance()
-            }
 
             addToQueue(QueuedParty(party, request.gameType))
 
             return Empty.getDefaultInstance()
         }
 
-        override suspend fun getDestinationGame(request: GetDestinationRequest): GetDestinationResponse =
-            Utils.handleRPC {
-                val player = UUID.fromString(request.playerUuid)
-                val destination = destinationCache.getIfPresent(player)
-                return if (destination != null) {
-                    destinationCache.invalidate(player)
-                    GetDestinationResponse.newBuilder()
-                        .setGameId(destination)
-                        .build()
-                } else {
-                    GetDestinationResponse.getDefaultInstance()
-                }
+        override suspend fun getDestinationGame(request: GetDestinationRequest): GetDestinationResponse = handleRPC {
+            val player = UUID.fromString(request.playerUuid)
+            val destination = destinationCache.getIfPresent(player)
+            return if (destination != null) {
+                destinationCache.invalidate(player)
+                GetDestinationResponse.newBuilder()
+                    .setGameId(destination)
+                    .build()
+            } else {
+                GetDestinationResponse.getDefaultInstance()
             }
+        }
 
-        override suspend fun removeFromQueue(request: Queue.RemoveFromQueueRequest): Empty = Utils.handleRPC {
+        override suspend fun removeFromQueue(request: Queue.RemoveFromQueueRequest): Empty = handleRPC {
             // TODO make sure you're the party leader?
             removeFromQueue(UUID.fromString(request.playerUuid))
             return Empty.getDefaultInstance()
