@@ -96,7 +96,7 @@ class PlayerTracker @Inject constructor(
             null,
             gameId = gameId,
         )
-        if (gameId != old) {
+        if (gameId != old && gameId != null) {
             queueService.removeFromQueue(player)
         }
     }

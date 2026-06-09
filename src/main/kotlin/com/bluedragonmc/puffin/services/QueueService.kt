@@ -177,6 +177,16 @@ class QueueService @Inject constructor(
 
     override fun addToQueue(party: QueuedParty) {
         Puffin.IO.launch {
+            val anyPlayersAlreadyInTheQueue = data.withParties { parties ->
+                parties.any { p ->
+                    p.players.any { player ->
+                        player in party.players
+                    }
+                }
+            }
+            if (anyPlayersAlreadyInTheQueue) {
+                return@launch
+            }
             val maps = mapService.getAvailableMaps(
                 party.gameType.name,
                 if (party.gameType.hasMode()) party.gameType.mode else null,
@@ -228,7 +238,9 @@ class QueueService @Inject constructor(
             val isEmpty = data.withParties { parties ->
                 parties.isEmpty()
             }
-            if (isEmpty) return@withLock
+            if (isEmpty) {
+                return@withLock
+            }
             val servers: List<GameServer> = data.withServers { servers -> servers.toList() }
             val jobs = mutableListOf<Job>()
             val games = servers.flatMap { it.games }
@@ -513,10 +525,25 @@ class QueueService @Inject constructor(
     inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
         override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty = handleRPC {
             val playerUuid = UUID.fromString(request.playerUuid)
-            val party = partyManager.partyOf(playerUuid)?.getMembers() ?: listOf(playerUuid)
+            val party = partyManager.partyOf(playerUuid)
+            if (party != null && party.leader != playerUuid) {
+                playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
+                return@handleRPC Empty.getDefaultInstance()
+            }
 
-            addToQueue(QueuedParty(party, request.gameType))
+            addToQueue(QueuedParty(party?.getMembers() ?: listOf(playerUuid), request.gameType))
 
+            return Empty.getDefaultInstance()
+        }
+
+        override suspend fun bulkAddToQueue(request: Queue.BulkAddToQueueRequest): Empty {
+            for (request in request.requestsList) {
+                val uuid = UUID.fromString(request.playerUuid)
+                val party = partyManager.partyOf(uuid)
+                if (party == null || party.leader == uuid) {
+                    addToQueue(request)
+                }
+            }
             return Empty.getDefaultInstance()
         }
 
@@ -534,8 +561,14 @@ class QueueService @Inject constructor(
         }
 
         override suspend fun removeFromQueue(request: Queue.RemoveFromQueueRequest): Empty = handleRPC {
-            // TODO make sure you're the party leader?
-            removeFromQueue(UUID.fromString(request.playerUuid))
+            val playerUuid = UUID.fromString(request.playerUuid)
+            val party = partyManager.partyOf(playerUuid)
+            if (party != null && party.leader != playerUuid) {
+                playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
+                return@handleRPC Empty.getDefaultInstance()
+            }
+
+            removeFromQueue(playerUuid)
             return Empty.getDefaultInstance()
         }
     }

@@ -35,7 +35,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 
-    implementation("com.github.bluedragonmc:rpc:eddbeed696")
+    implementation("com.github.bluedragonmc:rpc:aee4852ca5")
 //    implementation("com.bluedragonmc:rpc:1.0")
     implementation("com.github.java-json-tools:json-patch:1.13")
 
