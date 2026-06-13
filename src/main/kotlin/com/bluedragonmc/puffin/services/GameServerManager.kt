@@ -1,18 +1,17 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
-import com.bluedragonmc.api.grpc.CommonTypes.GameType
-import com.bluedragonmc.api.grpc.CommonTypes.GameType.GameTypeFieldSelector
 import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.bluedragonmc.puffin.app.Puffin
-import com.bluedragonmc.puffin.dashboard.ApiService
+import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.google.inject.Inject
+import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import io.grpc.StatusException
 import io.kubernetes.client.openapi.ApiException
@@ -24,10 +23,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
 
+interface IGameServerManager {
+    fun getK8sObject(serverName: String): GameServerManager.AgonesGameServer?
+
+    val serviceDiscoveryService: GameServerManager.ServerDiscoveryService
+    val instanceService: GameServerManager.InstanceService
+}
+
 /**
  * Fetches and maintains a list of game servers using the Kubernetes API
  */
-class GameManager(app: Puffin) : Service(app) {
+@Singleton
+class GameServerManager @Inject constructor(
+    val apiService: IApiService,
+    val playerTracker: IPlayerTracker,
+    val queueService: IQueueService,
+    val k8sServiceDiscovery: IK8sServiceDiscovery,
+    val mapsService: MapService
+) : Service(), IGameServerManager {
 
     private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
 
@@ -38,45 +51,36 @@ class GameManager(app: Puffin) : Service(app) {
         .expireAfterWrite(Duration.ofMinutes(2))
         .build<String, Int>()
 
-    /**
-     * A map of game server names to a list of instance IDs
-     */
-    private val gameServers = mutableMapOf<String, MutableSet<String>>()
-
     private val readyGameServers = mutableListOf<String>()
 
-    /**
-     * A map of game IDs to their running game types
-     */
-    private val gameTypes = mutableMapOf<String, GameType>()
+    init {
+        if (!DEV_MODE) {
 
-    override fun initialize() {
-        if (DEV_MODE) return
-
-        Puffin.IO.launch {
-            while (true) {
-                reloadGameServers()
-                watch()
-                logger.error("There was a problem watching Agones resources. Retrying...")
-                delay(5_000)
-            }
-        }
-
-        catchingTimer(
-            "GameManager Periodic Sync",
-            daemon = true,
-            initialDelay = Env.GS_SYNC_PERIOD,
-            period = Env.GS_SYNC_PERIOD
-        ) {
-
-            for ((serverName, _) in gameServers) {
-                Puffin.IO.launch {
-                    syncExistingServer(serverName)
+            Puffin.IO.launch {
+                while (true) {
+                    reloadGameServers()
+                    watch()
+                    logger.error("There was a problem watching Agones resources. Retrying...")
+                    delay(5_000)
                 }
             }
 
-            // Sync game servers periodically just in case a change isn't picked up by the watcher
-            reloadGameServers()
+            catchingTimer(
+                "GameManager Periodic Sync",
+                daemon = true,
+                initialDelay = Env.GS_SYNC_PERIOD,
+                period = Env.GS_SYNC_PERIOD
+            ) {
+
+                for ((serverName, _) in queueService.getServers()) {
+                    Puffin.IO.launch {
+                        syncExistingServer(serverName)
+                    }
+                }
+
+                // Sync game servers periodically just in case a change isn't picked up by the watcher
+                reloadGameServers()
+            }
         }
     }
 
@@ -101,7 +105,7 @@ class GameManager(app: Puffin) : Service(app) {
                     val old = kubernetesObjects[index]
                     kubernetesObjects[index] = server
                     if (old != server) {
-                        app.get(ApiService::class).apply {
+                        apiService.apply {
                             sendMerge(
                                 "gameServer", "patch", server.metadata.name!!,
                                 createJsonObjectForGameServer(AgonesGameServer(old)),
@@ -141,11 +145,10 @@ class GameManager(app: Puffin) : Service(app) {
                     val old = kubernetesObjects[index]
                     kubernetesObjects[index] = obj
                     if (old != obj) {
-                        val api = app.get(ApiService::class)
-                        api.sendMerge(
+                        apiService.sendMerge(
                             "gameServer", "patch", obj.metadata.name!!,
-                            api.createJsonObjectForGameServer(AgonesGameServer(old)),
-                            api.createJsonObjectForGameServer(AgonesGameServer(obj))
+                            apiService.createJsonObjectForGameServer(AgonesGameServer(old)),
+                            apiService.createJsonObjectForGameServer(AgonesGameServer(obj))
                         )
                     }
                     logger.debug("Game server '${obj.metadata.name}' is now in state: $newState")
@@ -175,80 +178,62 @@ class GameManager(app: Puffin) : Service(app) {
     private fun processServerRemoved(`object`: DynamicKubernetesObject) {
         val gs = AgonesGameServer(`object`)
         logger.info("GameServer ${gs.name} was removed.")
-        val instances = gameServers[gs.name] ?: emptySet()
-        gameServers.remove(gs.name)
+        queueService.removeServer(gs.name)
         readyGameServers.remove(gs.name)
-        synchronized(gameTypes) {
-            gameTypes.entries.removeAll { it.key in instances }
-        }
-        Utils.cleanupChannelsForServer(gs.name)
-        for (instance in instances) {
-            app.get(GameStateManager::class).clearGameState(instance)
-        }
-        app.get(ApiService::class).sendUpdate("gameServer", "remove", gs.name, null)
+        Utils.closeChannel(gs.address)
+        apiService.sendUpdate("gameServer", "remove", gs.name, null)
     }
 
     private fun processServerAdded(`object`: DynamicKubernetesObject) {
         val gs = AgonesGameServer(`object`)
         logger.info("New GameServer found: ${gs.name} (${gs.address}:${gs.port})")
-        gameServers.putIfAbsent(gs.name, mutableSetOf())
+        queueService.addServer(gs.name)
 
         // Get all running instances on this newly-added server
         Puffin.IO.launch {
             syncNewServer(gs.name)
         }
-        app.get(ApiService::class).sendUpdate(
+        apiService.sendUpdate(
             "gameServer", "add", gs.name,
-            app.get(ApiService::class).createJsonObjectForGameServer(gs)
+            apiService.createJsonObjectForGameServer(gs)
         )
     }
 
     private suspend fun syncExistingServer(serverName: String) {
-        val channel = Utils.getChannelToServer(serverName) ?: return
+        val channel = k8sServiceDiscovery.getChannelToServer(serverName) ?: return
         val playersResponse =
             PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel).getPlayers(Empty.getDefaultInstance())
         val instancesResponse =
             GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
 
-        app.get(PlayerTracker::class).updateGameServerPlayers(serverName, playersResponse)
+        playerTracker.updateGameServerPlayers(serverName, playersResponse)
 
         instancesResponse.instancesList.forEach { instance ->
-            synchronized(gameTypes) {
-                if (!gameTypes.containsKey(instance.instanceUuid)) {
-                    logger.warn("Updated game type information for previously-unknown instance ${instance.instanceUuid} (${instance.gameType})")
-                    gameTypes[instance.instanceUuid] = instance.gameType
-                }
-            }
-
-            app.get(GameStateManager::class).setGameState(instance.instanceUuid, instance.gameState)
-            app.get(PlayerTracker::class).updateGamePlayers(instance.instanceUuid, instance)
+            queueService.setGameState(instance.instanceUuid, instance.gameState)
+            playerTracker.updateGamePlayers(instance.instanceUuid, instance)
         }
     }
 
     private suspend fun syncNewServer(serverName: String) {
         // Wait for the server's gRPC port to become available
         try {
-            val channel = Utils.getChannelToServer(serverName) ?: return
+            val channel = k8sServiceDiscovery.getChannelToServer(serverName) ?: return
             val playersResponse =
                 PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel).getPlayers(Empty.getDefaultInstance())
             val instancesResponse =
                 GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
 
-            app.get(PlayerTracker::class).updateGameServerPlayers(serverName, playersResponse)
+            playerTracker.updateGameServerPlayers(serverName, playersResponse)
             logger.info("Found ${playersResponse.playersCount} players on server $serverName")
             instancesResponse.instancesList.forEach { instance ->
                 val id = instance.instanceUuid
-                synchronized(gameTypes) {
-                    gameTypes[id] = instance.gameType
-                }
-                gameServers[serverName]!!.add(id)
                 handleInstanceCreated(instanceCreatedRequest {
                     this.serverName = serverName
                     this.instanceUuid = id
                     this.gameType = instance.gameType
                     this.gameState = instance.gameState
                 })
-                app.get(PlayerTracker::class).updateGamePlayers(id, instance)
+                playerTracker.updateGamePlayers(id, instance)
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {
@@ -280,82 +265,11 @@ class GameManager(app: Puffin) : Service(app) {
         }
     }
 
-    fun getGameType(gameId: String) = synchronized(gameTypes) { gameTypes[gameId] }
-    fun getAllGames(): List<String> = synchronized(gameTypes) { ArrayList(gameTypes.keys) }
-
-    /**
-     * Filters the currently-running instances using the flags
-     * (selectors) set in the [other] [CommonTypes.GameType] parameter.
-     */
-    fun filterRunningGames(
-        other: GameType,
-    ): Map<String, GameType> {
-
-        val flags = other.selectorsList
-
-        synchronized(gameTypes) {
-            return gameTypes.filter { (_, type) ->
-                (!flags.contains(GameTypeFieldSelector.GAME_NAME) || type.name == other.name) &&
-                        (!flags.contains(GameTypeFieldSelector.GAME_MODE) || type.mode == other.mode) &&
-                        (!flags.contains(GameTypeFieldSelector.MAP_NAME) || type.mapName == other.mapName)
-            }
-        }
-    }
-
-    fun getJoinableInstances(
-        gameType: GameType,
-    ): Int {
-        return filterRunningGames(gameType).count { (gameId, _) ->
-            app.get(GameStateManager::class).getEmptySlots(gameId) > 0
-        }
-    }
-
-    /**
-     * Finds the game server with the least running instances.
-     * Used to create new instances on the least-strained
-     * game server.
-     */
-    fun findGameServerWithLeastInstances() =
-        gameServers.minByOrNull { (_, instances) -> instances.size }
-
-    /**
-     * Gets the game server name given one of its
-     * registered instance IDs. Returns null if no
-     * server was found.
-     */
-    fun getGameServerOf(gameId: String): String? {
-        return gameServers.entries.firstOrNull { it.value.contains(gameId) }?.key
-    }
-
-    fun getInstancesInServer(serverName: String): Set<String> {
-        return gameServers[serverName] ?: emptySet()
-    }
-
-    /**
-     * Makes a defensive copy of the list of servers just in case it is changed while iterating.
-     */
-    fun getGameServers(): List<GameServer> {
-        if (DEV_MODE) {
-            if (gameServers.isNotEmpty()) {
-                return listOf(StaticGameServer(DEFAULT_GS_IP, gameServers.entries.first().key, 25565))
-            } else {
-                return listOf(StaticGameServer(DEFAULT_GS_IP, "dev-server", 25565))
-            }
-        }
-        return ArrayList(kubernetesObjects).map { AgonesGameServer(it) }
-    }
-
     interface GameServer {
         val address: String
         val name: String
         val port: Int?
     }
-
-    private data class StaticGameServer(
-        override val address: String,
-        override val name: String,
-        override val port: Int?,
-    ) : GameServer
 
     data class AgonesGameServer(val `object`: DynamicKubernetesObject) : GameServer {
         private val status = `object`.raw.getAsJsonObject("status")
@@ -371,41 +285,68 @@ class GameManager(app: Puffin) : Service(app) {
         override val name = `object`.metadata.name!!
     }
 
+    override fun getK8sObject(serverName: String): AgonesGameServer? {
+        return kubernetesObjects.map { AgonesGameServer(it) }.find { it.name == serverName }
+    }
+
+    override val serviceDiscoveryService by lazy { ServerDiscoveryService() }
+
     inner class ServerDiscoveryService : LobbyServiceGrpcKt.LobbyServiceCoroutineImplBase() {
         override suspend fun findLobby(request: ServiceDiscovery.FindLobbyRequest): ServiceDiscovery.FindLobbyResponse =
             handleRPC {
+                val servers = queueService.getServers().filter { gs ->
+                    (request.includeServerNamesCount == 0 || request.includeServerNamesList.contains(gs.name)) &&
+                            (request.excludeServerNamesCount == 0 || !request.excludeServerNamesList.contains(gs.name))
+                }
 
-                // Find any running instances with the "Lobby" game type.
-                val gs = getGameServers()
-                val lobbies = filterRunningGames(
-                    gameType {
-                        name = "Lobby"
-                        selectors += GameTypeFieldSelector.GAME_NAME
-                    }
-                ).keys.associateWith { getGameServerOf(it) }.filter { it.value != null }
-
-                return findLobbyResponse {
-                    found = false
-                    for ((gameId, gameServer) in lobbies) {
-                        if (request.includeServerNamesCount > 0 && gameServer !in request.includeServerNamesList) continue
-                        if (request.excludeServerNamesCount > 0 && gameServer in request.excludeServerNamesList) continue
-                        val info = gs.find { it.name == gameServer } ?: continue
-                        found = true
-                        serverName = gameServer!!
-                        ip = info.address
-                        port = info.port ?: 25565
-                        instanceUuid = gameId
-                        break
+                for (server in servers) {
+                    for (game in server.games) {
+                        if (game.gameType.name == "Lobby") {
+                            val info = getK8sObject(server.name) ?: continue
+                            return ServiceDiscovery.FindLobbyResponse.newBuilder()
+                                .setFound(true)
+                                .setServerName(server.name)
+                                .setIp(info.address)
+                                .setPort(info.port ?: 25565)
+                                .setInstanceUuid(game.id)
+                                .build()
+                        }
                     }
                 }
+
+                if (servers.isEmpty()) {
+                    return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
+                }
+
+                // Start up a lobby if one wasn't found
+                val bestServer = servers.minBy { queueService.getServer(it.name)?.games?.size ?: Integer.MAX_VALUE }
+                val info = getK8sObject(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
+
+                val stub = k8sServiceDiscovery.getStubToServer(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
+                val response = stub.createInstance(
+                    GsClient.CreateInstanceRequest.newBuilder()
+                        .setGame("Lobby")
+                        .setMapSource(mapsService.getAvailableMaps("Lobby", null, null, null).random())
+                        .build()
+                )
+
+                return ServiceDiscovery.FindLobbyResponse.newBuilder()
+                    .setFound(true)
+                    .setServerName(bestServer.name)
+                    .setIp(info.address)
+                    .setPort(info.port ?: 25565)
+                    .setInstanceUuid(response.instanceUuid)
+                    .build()
             }
     }
+
+    override val instanceService by lazy { InstanceService() }
 
     inner class InstanceService : InstanceServiceGrpcKt.InstanceServiceCoroutineImplBase() {
         override suspend fun initGameServer(request: ServerTracking.InitGameServerRequest): Empty = handleRPC {
             // Called when a new game server starts up and sends a ping
             logger.info("New game server started and pinged: ${request.serverName}")
-            gameServers[request.serverName] = mutableSetOf()
+            queueService.addServer(request.serverName)
             return Empty.getDefaultInstance()
         }
 
@@ -424,14 +365,7 @@ class GameManager(app: Puffin) : Service(app) {
         override suspend fun getTotalPlayerCount(request: ServerTracking.PlayerCountRequest): ServerTracking.PlayerCountResponse =
             handleRPC {
                 return playerCountResponse {
-                    totalPlayers = app.get(PlayerTracker::class).getPlayerCount(request.filterGameTypeOrNull)
-                }
-            }
-
-        override suspend fun checkRemoveInstance(request: ServerTracking.InstanceRemovedRequest): ServerTracking.CheckRemoveInstanceResponse =
-            handleRPC {
-                return checkRemoveInstanceResponse {
-                    shouldRemove = app.get(MinInstanceService::class).shouldRemoveInstance(request)
+                    totalPlayers = playerTracker.getPlayerCount(request.filterGameTypeOrNull)
                 }
             }
     }
@@ -439,36 +373,19 @@ class GameManager(app: Puffin) : Service(app) {
     private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
         logger.info(
             "Game created: ${request.serverName}/${request.instanceUuid} " +
-                    "(${request.gameType.name}/${request.gameType.mapName}/${request.gameType.mode})"
+                    "(${request.gameType.name}/${request.gameType.mapId}/${request.gameType.mode})"
         )
-        // Add to map of instances to game types
-        val gameId = request.instanceUuid
-        synchronized(gameTypes) {
-            gameTypes[gameId] = request.gameType
-        }
+        queueService.addGame(request.serverName, request.instanceUuid, request.gameType, request.gameState)
 
-        app.get(GameStateManager::class).setGameState(gameId, request.gameState)
-
-        // Add to list of containers
-        if (!gameServers.containsKey(request.serverName)) {
-            logger.warn("Game was created without a PingMessage sent first. Game server name: ${request.serverName}, Instance ID: $gameId.")
-            gameServers[request.serverName] = mutableSetOf()
-        }
-        gameServers[request.serverName]!!.add(gameId)
-        app.get(ApiService::class).sendUpdate(
+        apiService.sendUpdate(
             "instance", "add", request.instanceUuid,
-            app.get(ApiService::class).createJsonObjectForGame(request.instanceUuid)
+            apiService.createJsonObjectForGame(request.instanceUuid)
         )
     }
 
     private fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
         logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
-        val gameId = request.instanceUuid
-        gameServers[request.serverName]?.remove(gameId)
-        synchronized(gameTypes) {
-            gameTypes.remove(gameId)
-        }
-        app.get(GameStateManager::class).clearGameState(gameId)
-        app.get(ApiService::class).sendUpdate("instance", "remove", request.instanceUuid, null)
+        queueService.removeGame(request.serverName, request.instanceUuid)
+        apiService.sendUpdate("instance", "remove", request.instanceUuid, null)
     }
 }

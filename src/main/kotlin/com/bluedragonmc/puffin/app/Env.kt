@@ -26,4 +26,7 @@ object Env {
     val GRPC_SERVER_PORT = System.getenv("PUFFIN_GRPC_PORT")?.toIntOrNull() ?: 50051
     val GS_GRPC_PORT = System.getenv("PUFFIN_GAMESERVER_GRPC_PORT")?.toIntOrNull() ?: 50051
     val PROXY_GRPC_PORT = System.getenv("PUFFIN_PROXY_GRPC_PORT")?.toIntOrNull() ?: 50051
+
+    val API_SERVICE_PORT = System.getenv("PUFFIN_API_PORT")?.toIntOrNull() ?: 8080
+    val MAP_SERVICE_PORT = System.getenv("PUFFIN_MAPS_PORT")?.toIntOrNull() ?: 8082
 }

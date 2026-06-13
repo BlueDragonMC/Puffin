@@ -1,12 +1,15 @@
 package com.bluedragonmc.puffin.dashboard
 
-import com.bluedragonmc.api.grpc.CommonTypes.GameType
+import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.services.*
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.github.fge.jsonpatch.diff.JsonDiff
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
-import com.tananaev.jsonpatch.JsonPatchFactory
+import com.google.inject.Inject
+import com.google.inject.Singleton
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
@@ -15,7 +18,23 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.util.*
 
-class ApiService(app: ServiceHolder) : Service(app) {
+interface IApiService {
+    fun registerCallbacks()
+    fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?)
+    fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject)
+    fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject
+    fun createJsonObjectForGame(gameId: String): JsonObject
+    fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject
+}
+
+@Singleton
+class ApiService @Inject constructor(
+    val databaseConnection: DatabaseConnection,
+    val playerTracker: IPlayerTracker,
+    val partyManager: IPartyManager,
+    val gameServerManager: IGameServerManager,
+    val queueService: IQueueService,
+) : Service(), IApiService {
 
     inner class SocketServer(addr: InetSocketAddress) : WebSocketServer(addr) {
 
@@ -34,9 +53,8 @@ class ApiService(app: ServiceHolder) : Service(app) {
             val decoded = gson.fromJson(message, JsonObject::class.java)
             when (decoded.get("request").asString) {
                 "getGameServers" -> {
-                    val im = app.get(GameManager::class)
-                    val gameServers = im.getGameServers().map { gs ->
-                        createJsonObjectForGameServer(gs)
+                    val gameServers = queueService.getServers().mapNotNull { gs ->
+                        gameServerManager.getK8sObject(gs.name)?.let { createJsonObjectForGameServer(it) }
                     }
                     val arr = JsonArray().apply {
                         gameServers.forEach { add(it) }
@@ -51,8 +69,8 @@ class ApiService(app: ServiceHolder) : Service(app) {
                 "getInstances" -> conn.send(JsonObject().apply {
                     addProperty("type", "instances")
                     add("instances", JsonArray().apply {
-                        app.get(GameManager::class).getAllGames().forEach { gameId ->
-                            add(createJsonObjectForGame(gameId))
+                        queueService.getGames().forEach { game ->
+                            add(createJsonObjectForGame(game.id))
                         }
                     })
                 }.toString())
@@ -65,7 +83,7 @@ class ApiService(app: ServiceHolder) : Service(app) {
                     conn.send(JsonObject().apply {
                         addProperty("type", "parties")
                         add("parties", JsonArray().apply {
-                            app.get(PartyManager::class).getParties().forEach { party ->
+                            partyManager.getParties().forEach { party ->
                                 add(createJsonObjectForParty(party))
                             }
                         })
@@ -76,15 +94,11 @@ class ApiService(app: ServiceHolder) : Service(app) {
                     conn.send(JsonObject().apply {
                         addProperty("type", "players")
                         add("players", JsonArray().apply {
-                            app.get(PlayerTracker::class).getPlayers().forEach { (uuid, state) ->
+                            playerTracker.getPlayers().forEach { (uuid, state) ->
                                 add(createJsonObjectForPlayer(uuid, state))
                             }
                         })
                     }.toString())
-                }
-
-                "getGameTypes" -> {
-                    conn.send(getGameTypes().toString())
                 }
             }
         }
@@ -99,14 +113,43 @@ class ApiService(app: ServiceHolder) : Service(app) {
         }
     }
 
-    private lateinit var ws: WebSocketServer
+    private val ws: WebSocketServer =
+        SocketServer(InetSocketAddress(InetAddress.getByName("0.0.0.0"), Env.API_SERVICE_PORT))
 
-    override fun initialize() {
-        ws = SocketServer(InetSocketAddress(InetAddress.getByName("0.0.0.0"), 8080))
+    init {
         ws.start()
     }
 
-    fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?) {
+    override fun registerCallbacks() {
+        playerTracker.registerInstanceChangeCallback { player, serverName, gameId ->
+            sendUpdate(
+                "player",
+                "update",
+                player.toString(),
+                createJsonObjectForPlayer(
+                    player,
+                    playerTracker.getPlayer(player) ?: return@registerInstanceChangeCallback
+                )
+            )
+        }
+
+        playerTracker.registerLogoutCallback { uuid ->
+            sendUpdate("player", "remove", uuid.toString(), null)
+        }
+
+        queueService.registerInstanceUpdateCallback { gameId ->
+            sendUpdate(
+                "instance", "update", gameId,
+                createJsonObjectForGame(gameId)
+            )
+        }
+
+        partyManager.registerPartyUpdateCallback { action, id, updated ->
+            sendUpdate("party", action, id, updated)
+        }
+    }
+
+    override fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?) {
         val obj = JsonObject().apply {
             addProperty("type", "update")
             addProperty("action", action)
@@ -118,111 +161,83 @@ class ApiService(app: ServiceHolder) : Service(app) {
     }
 
     private val gson = Gson()
-    private val pf = JsonPatchFactory()
+    private val objectMapper = ObjectMapper()
 
-    fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject) {
-        val patch = pf.create(old, new)
-        val json = gson.toJsonTree(patch)
-        for ((index, item) in json.asJsonArray.withIndex()) {
-            // Convert the JSON paths to strings. By default, they're serialized as arrays, which doesn't comply with the JSON patch spec
-            val obj = item.asJsonObject
-            obj.addProperty("path", patch[index].path.toString())
-        }
+    override fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject) {
+        val patch = JsonDiff.asJsonPatch(
+            objectMapper.readTree(gson.toJson(old)),
+            objectMapper.readTree(gson.toJson(new))
+        )
+        val str = objectMapper.writeValueAsString(patch)
+        val json = gson.fromJson(str, JsonArray::class.java)
         sendUpdate(resource, action, id, json)
     }
 
-    fun createJsonObjectForGameServer(gs: GameManager.GameServer): JsonObject {
+    override fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject {
         return JsonObject().apply {
-            if (gs is GameManager.AgonesGameServer) {
+            if (gs is GameServerManager.AgonesGameServer) {
                 add("raw", gs.`object`.raw)
             }
             addProperty("name", gs.name)
             addProperty("address", gs.address)
             addProperty("port", gs.port)
             val instances = JsonArray().apply {
-                app.get(GameManager::class).getInstancesInServer(gs.name)
-                    .forEach { add(it) }
+                queueService.getServer(gs.name)?.games?.forEach { game -> add(game.id) }
             }
             add("instances", instances)
         }
     }
 
-    fun createJsonObjectForGame(gameId: String): JsonObject {
-        val gameManager = app.get(GameManager::class)
-        val stateManager = app.get(GameStateManager::class)
-        val playerTracker = app.get(PlayerTracker::class)
+    override fun createJsonObjectForGame(gameId: String): JsonObject {
+        val game = queueService.getGame(gameId)
         return JsonObject().apply {
             addProperty("type", "instance")
             addProperty("id", gameId)
-            addProperty("emptySlots", stateManager.getEmptySlots(gameId))
-            addProperty("gameServer", gameManager.getGameServerOf(gameId))
-            val state = stateManager.getState(gameId)
+            addProperty("emptySlots", game?.emptySlots)
+            addProperty("gameServer", queueService.getServerOfGame(gameId))
             add("gameState", JsonObject().apply {
-                addProperty("joinable", state?.joinable)
-                addProperty("openSlots", state?.openSlots)
-                addProperty("maxSlots", state?.maxSlots)
+                addProperty("openSlots", game?.emptySlots)
+                addProperty("maxSlots", game?.maxPlayers)
                 addProperty("playerCount", playerTracker.getPlayersInInstance(gameId).size)
-                addProperty("stateName", state?.gameState?.name)
+                addProperty("stateName", game?.state?.name)
             })
-            val type = gameManager.getGameType(gameId)
+            val type = queueService.getGame(gameId)?.gameType
             add("gameType", JsonObject().apply {
                 addProperty("name", type?.name)
-                addProperty("mapName", type?.mapName)
+                addProperty("mapName", type?.mapId)
                 addProperty("mode", type?.mode)
             })
         }
     }
 
-    fun createJsonObjectForGameType(type: GameType): JsonObject {
-        return JsonObject().apply {
-            addProperty("name", type.name)
-            addProperty("mapName", type.mapName)
-            addProperty("mode", type.mode)
-            add("instances", JsonArray().apply {
-                for (instance in app.get(GameManager::class).filterRunningGames(type).keys) {
-                    add(instance)
-                }
-            })
-        }
-    }
-
-    fun createJsonObjectForParty(party: PartyManager.Party): JsonObject {
-        return JsonObject().apply {
-            addProperty("id", party.id)
-            add("members", JsonArray().apply {
-                party.getMembers().forEach { member -> add(member.toString()) }
-            })
-            addProperty("leader", party.leader.toString())
-            add("invitations", JsonArray().apply { party.invitations.forEach { it -> add(it.toString()) } })
-            if (party.marathon != null) {
-                add("marathon", JsonObject().apply {
-                    add("points", JsonObject().apply {
-                        party.marathon?.getPoints()?.forEach { (k, v) -> addProperty(k.toString(), v) }
-                    })
-                    addProperty("endsAt", party.marathon?.endsAt)
-                })
-            }
-        }
-    }
-
-    fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject {
+    override fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject {
         return JsonObject().apply {
             addProperty("uuid", uuid.toString())
-            addProperty("username", app.get(DatabaseConnection::class).getPlayerName(uuid))
+            addProperty("username", databaseConnection.getPlayerName(uuid))
             addProperty("proxyPodName", state.proxyPodName)
             addProperty("gameServerName", state.gameServerName)
             addProperty("gameId", state.gameId)
         }
     }
 
-    private fun getGameTypes(): JsonObject {
-        return JsonObject().apply {
-            addProperty("type", "gameTypes")
-            add("types", JsonArray().apply {
-                for (type in app.get(MinInstanceService::class).getGameTypes()) {
-                    add(createJsonObjectForGameType(type))
+    companion object {
+        fun createJsonObjectForParty(party: PartyManager.Party): JsonObject {
+            return JsonObject().apply {
+                addProperty("id", party.id)
+                add("members", JsonArray().apply {
+                    party.getMembers().forEach { member -> add(member.toString()) }
+                })
+                addProperty("leader", party.leader.toString())
+                add("invitations", JsonArray().apply { party.invitations.forEach { add(it.toString()) } })
+                if (party.marathon != null) {
+                    add("marathon", JsonObject().apply {
+                        add("points", JsonObject().apply {
+                            party.marathon?.getPoints()?.forEach { (k, v) -> addProperty(k.toString(), v) }
+                        })
+                        addProperty("endsAt", party.marathon?.endsAt)
+                    })
                 }
-            })
+            }
         }
     }
 }

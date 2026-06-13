@@ -2,17 +2,19 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.VelocityMessage
 import com.bluedragonmc.api.grpc.VelocityMessageServiceGrpcKt
-import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.google.inject.Inject
+import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import java.time.Duration
-import java.util.UUID
+import java.util.*
 
 /**
  * Sends private messages (i.e. /msg) to players on other servers
  */
-class PrivateMessageService(app: ServiceHolder) : Service(app) {
+@Singleton
+class PrivateMessageService @Inject constructor(val playerTracker: IPlayerTracker) : Service() {
 
     /**
      * A cache of players to the last player they
@@ -34,11 +36,14 @@ class PrivateMessageService(app: ServiceHolder) : Service(app) {
                 UUID.fromString(request.recipientUuid)
             }
             if (recipient == null) {
-                Utils.sendChat(UUID.fromString(request.senderUuid), "<red>You have not replied to anyone recently!")
+                playerTracker.sendChat(
+                    UUID.fromString(request.senderUuid),
+                    "<red>You have not replied to anyone recently!"
+                )
                 return Empty.getDefaultInstance() // No possible recipient was found.
             }
             // Send the message to the recipient
-            Utils.sendChat(recipient, finalMessage)
+            playerTracker.sendChat(recipient, finalMessage)
             // Update the sender's most recent recipient
             lastReplyCache.put(UUID.fromString(request.senderUuid), recipient)
 

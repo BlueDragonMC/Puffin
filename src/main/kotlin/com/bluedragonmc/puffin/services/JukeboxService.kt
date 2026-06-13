@@ -2,9 +2,10 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.JukeboxGrpcKt
 import com.bluedragonmc.api.grpc.JukeboxOuterClass
-import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.google.inject.Inject
+import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import java.time.Duration
 import java.util.*
@@ -12,12 +13,13 @@ import java.util.*
 /**
  * Saves current song information while players transfer between servers.
  */
-class JukeboxService(app: ServiceHolder) : Service(app) {
+@Singleton
+class JukeboxService @Inject constructor(val playerTracker: IPlayerTracker) : Service() {
 
     inner class JukeboxRedirectService : JukeboxGrpcKt.JukeboxCoroutineImplBase() {
 
         private fun stubTo(playerUUID: String): JukeboxGrpcKt.JukeboxCoroutineStub? {
-            return Utils.getChannelToPlayer(UUID.fromString(playerUUID))?.let {
+            return playerTracker.getChannelToPlayer(UUID.fromString(playerUUID))?.let {
                 JukeboxGrpcKt.JukeboxCoroutineStub(it)
             }
         }
