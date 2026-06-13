@@ -11,7 +11,7 @@ version = "1.0.0"
 repositories {
     mavenCentral()
     mavenLocal()
-    maven(url = "https://jitpack.io")
+    maven(url = "https://reposilite.bluedragonmc.com/releases")
 }
 
 val grpcKotlinVersion = "1.4.1"
@@ -35,8 +35,8 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 
-    implementation("com.github.bluedragonmc:rpc:aee4852ca5")
-//    implementation("com.bluedragonmc:rpc:1.0")
+    implementation("com.bluedragonmc:rpc:2026-06-13-f05505c")
+//    implementation("com.bluedragonmc:rpc:dev")
     implementation("com.github.java-json-tools:json-patch:1.13")
 
     implementation("io.grpc:grpc-services:$grpcVersion")
