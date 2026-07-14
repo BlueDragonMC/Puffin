@@ -2,7 +2,7 @@
 # see https://docs.docker.com/engine/reference/builder/#buildkit
 
 # Build the project into an executable JAR
-FROM gradle:jdk25 as build
+FROM gradle:9.5.1-jdk25 AS build
 # Copy build files and source code
 COPY . /work
 WORKDIR /work
