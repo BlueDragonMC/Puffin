@@ -422,7 +422,9 @@ class QueueService @Inject constructor(
 
     override fun addServer(name: String) {
         data.withServersBlocking { servers ->
-            servers.add(GameServer(name, emptyList()))
+            if (servers.none { it.name == name }) {
+                servers.add(GameServer(name, emptyList()))
+            }
         }
         Puffin.IO.launch { processQueue() }
     }
