@@ -109,10 +109,10 @@ class DatabaseConnection : Service() {
         if (whitelistedPlayers != null) {
             val clause = mutableListOf<Bson>()
             for (player in whitelistedPlayers) {
-                clause += Filters.eq("whitelist", player.toString())
+                clause += Filters.eq("world.whitelist", player.toString())
             }
             filters += Filters.or(
-                Filters.eq("whitelist", null),
+                Filters.eq("world.whitelist", null),
                 Filters.and(clause)
             )
         }
