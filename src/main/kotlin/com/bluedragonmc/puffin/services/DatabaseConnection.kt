@@ -27,7 +27,6 @@ import org.litote.kmongo.coroutine.coroutine
 import org.litote.kmongo.reactivestreams.KMongo
 import org.litote.kmongo.upsert
 import java.io.File
-import java.net.Inet4Address
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -128,7 +127,7 @@ class DatabaseConnection : Service() {
             .setMapId(mapId)
             .setMapConfig(doc.toJson())
             .setMapFormat(CommonTypes.MapFormat.POLAR)
-            .setMapUrl("http://${Inet4Address.getLocalHost().hostAddress}:${Env.MAP_SERVICE_PORT}/map/$mapId/data")
+            .setMapUrl("http://${Env.MAP_SERVICE_HOST}:${Env.MAP_SERVICE_PORT}/map/$mapId/data")
             .build()
     }
 

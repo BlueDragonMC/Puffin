@@ -1,5 +1,7 @@
 package com.bluedragonmc.puffin.app
 
+import java.net.Inet4Address
+
 object Env {
 
     val K8S_NAMESPACE = System.getenv("PUFFIN_K8S_NAMESPACE") ?: "default"
@@ -28,5 +30,10 @@ object Env {
     val PROXY_GRPC_PORT = System.getenv("PUFFIN_PROXY_GRPC_PORT")?.toIntOrNull() ?: 50051
 
     val API_SERVICE_PORT = System.getenv("PUFFIN_API_PORT")?.toIntOrNull() ?: 8080
-    val MAP_SERVICE_PORT = System.getenv("PUFFIN_MAPS_PORT")?.toIntOrNull() ?: 8082
+
+    val MAP_SERVICE_HOST = System.getenv("PUFFIN_SERVICE_HOST") ?: Inet4Address.getLocalHost().hostName
+    val MAP_SERVICE_PORT =
+        System.getenv("PUFFIN_SERVICE_PORT_MAP_SERVICE")?.toIntOrNull()
+            ?: System.getenv("PUFFIN_MAPS_PORT")?.toIntOrNull()
+            ?: 8082
 }
