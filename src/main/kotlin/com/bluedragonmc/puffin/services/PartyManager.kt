@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.*
+import kotlin.time.Duration.Companion.milliseconds
 
 interface IPartyManager {
     fun getParties(): Set<PartyManager.Party>
@@ -40,7 +41,7 @@ class PartyManager @Inject constructor(
     override fun getParties() = parties.toSet()
     override fun partyOf(player: UUID) = parties.find { player in it.getMembers() }
     private fun createParty(leader: UUID) =
-        Party(this, mutableListOf(leader), mutableMapOf(), leader = leader).also { parties.add(it) }
+        Party(this, mutableListOf(leader), mutableMapOf(), _leader = leader).also { parties.add(it) }
 
     /**
      * Returns the username of the UUID, with an (optional) MiniMessage-formatted color prepended.
@@ -82,7 +83,7 @@ class PartyManager @Inject constructor(
 
         init {
             cancelJob = Puffin.IO.launch {
-                delay(endsAt - System.currentTimeMillis())
+                delay((endsAt - System.currentTimeMillis()).milliseconds)
                 svc.playerTracker.sendChat(
                     party.getMembers(),
                     Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.ended>\n${party.marathon!!.formatLeaderboard()}")
@@ -93,14 +94,14 @@ class PartyManager @Inject constructor(
 
         fun addPoints(uuid: UUID, amount: Int) {
             points[uuid] = points[uuid]?.plus(amount) ?: amount
-            party.sendUpdate()
+            party.update()
         }
 
         fun end() {
             cancelJob.cancel()
             points.clear()
             party.marathon = null
-            party.sendUpdate()
+            party.update()
         }
 
         fun getPoints() = points.toMap()
@@ -136,11 +137,26 @@ class PartyManager @Inject constructor(
          * The party's current members, including the leader
          */
         private val members: MutableList<UUID>,
-        val invitations: MutableMap<UUID, Timer>,
+        private val _invitations: MutableMap<UUID, Timer>,
         val id: String = UUID.randomUUID().toString(),
-        var leader: UUID,
-        var marathon: Marathon? = null,
+        private var _leader: UUID,
+        private var _marathon: Marathon? = null,
     ) {
+        val invitations: Map<UUID, Timer> get() = _invitations
+        var marathon: Marathon?
+            get() = _marathon
+            set(value) {
+                _marathon = value
+                update()
+            }
+
+        var leader: UUID
+            get() = _leader
+            set(value) {
+                val changed = _leader != value
+                _leader = value
+                if (changed) update()
+            }
 
         init {
             svc.partyUpdateCallbacks.forEach { it("add", id, ApiService.createJsonObjectForParty(this)) }
@@ -148,12 +164,12 @@ class PartyManager @Inject constructor(
 
         fun add(player: UUID) {
             members.add(player)
-            sendUpdate()
+            removeInvitation(player)
         }
 
         fun remove(player: UUID) {
             members.remove(player)
-            sendUpdate()
+            update()
         }
 
         fun getMembers() = members.toList()
@@ -175,24 +191,34 @@ class PartyManager @Inject constructor(
                         "<yellow><lang:puffin.party.transfer.auto:'${svc.getUsername(member)}':'$leaderUsername'>"
                     )
                 )
-                leader = member
+                _leader = member
+            } else {
                 sendUpdate()
             }
         }
 
-        internal fun sendUpdate() {
+        private fun sendUpdate() {
             svc.partyUpdateCallbacks.forEach { it("update", id, ApiService.createJsonObjectForParty(this)) }
+        }
+
+        fun removeInvitation(player: UUID) {
+            _invitations.remove(player)
+            update()
+        }
+
+        fun addInvitation(player: UUID, timer: Timer) {
+            _invitations[player] = timer
+            update()
         }
     }
 
     override fun onLogout(player: UUID) {
-        val party = partyOf(player) ?: return@onLogout
-        party.remove(player)
+        val party = partyOf(player) ?: return
         playerTracker.sendChatAsync(
             party.getMembers(),
             Utils.surroundWithSeparators("<red><lang:puffin.party.player_logged_out:'${player.name}'>")
         )
-        party.update()
+        party.remove(player)
     }
 
     override val partyService by lazy { PartyService() }
@@ -211,7 +237,6 @@ class PartyManager @Inject constructor(
                     party.getMembers(),
                     Utils.surroundWithSeparators("<p2><lang:puffin.party.join.other:'${player.name}'>")
                 )
-                party.invitations.remove(player)
                 party.add(player)
                 playerTracker.sendChat(
                     player,
@@ -241,16 +266,14 @@ class PartyManager @Inject constructor(
             val timer = catchingTimer(daemon = true, initialDelay = 60_000, period = 60_000) {
                 this.cancel()
                 if (party.invitations.contains(player)) {
-                    party.invitations.remove(player)
-                    party.sendUpdate()
+                    party.removeInvitation(player)
                     playerTracker.sendChatAsync(
                         player,
                         "<p2><lang:puffin.party.invite.expired:'${partyOwner.name}'>"
                     )
                 }
             }
-            party.invitations[player] = timer
-            party.sendUpdate()
+            party.addInvitation(player, timer)
             return Empty.getDefaultInstance()
         }
 
@@ -300,8 +323,10 @@ class PartyManager @Inject constructor(
                             party.getMembers(),
                             Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.success:'${player.name}'>")
                         )
-                        playerTracker.sendChat(player, Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.removed>"))
-                        party.update()
+                        playerTracker.sendChat(
+                            player,
+                            Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.removed>")
+                        )
                     } else {
                         playerTracker.sendChat(player, "<red><lang:puffin.party.member_not_found>")
                     }
@@ -323,7 +348,6 @@ class PartyManager @Inject constructor(
                     party.getMembers(),
                     Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.others:'${player.name}'>")
                 )
-                party.update()
             } else {
                 playerTracker.sendChat(player, "<red><lang:puffin.party.not_found>")
             }
@@ -350,7 +374,6 @@ class PartyManager @Inject constructor(
                 return Empty.getDefaultInstance()
             }
             party.leader = newUuid
-            party.sendUpdate()
             playerTracker.sendChat(
                 party.getMembers(),
                 Utils.surroundWithSeparators("<p2><lang:puffin.party.transfer.success:'${newUuid.name}'>")
@@ -385,7 +408,8 @@ class PartyManager @Inject constructor(
             }
 
             // Warp every member
-            val leaderGameId = playerTracker.getPlayer(party.leader)?.gameId ?: return@handleRPC Empty.getDefaultInstance()
+            val leaderGameId =
+                playerTracker.getPlayer(party.leader)?.gameId ?: return@handleRPC Empty.getDefaultInstance()
             val membersToWarp =
                 party.getMembers().count { member -> playerTracker.getPlayer(member)?.gameId != leaderGameId }
             party.getMembers().forEach {
@@ -451,8 +475,8 @@ class PartyManager @Inject constructor(
                 return Empty.getDefaultInstance()
             }
 
-            party.marathon = Marathon(this@PartyManager, party, System.currentTimeMillis() + request.durationMs, mutableMapOf())
-            party.sendUpdate()
+            party.marathon =
+                Marathon(this@PartyManager, party, System.currentTimeMillis() + request.durationMs, mutableMapOf())
 
             val minutes = request.durationMs / 1000 / 60
             playerTracker.sendChat(
@@ -498,7 +522,7 @@ class PartyManager @Inject constructor(
             val uuid = UUID.fromString(request.playerUuid)
             val party = partyOf(uuid)
 
-            if (party == null || party.marathon == null) {
+            if (party?.marathon == null) {
                 return Empty.getDefaultInstance()
             }
 
