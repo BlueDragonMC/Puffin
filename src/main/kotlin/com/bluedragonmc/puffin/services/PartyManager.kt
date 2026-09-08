@@ -38,10 +38,15 @@ class PartyManager @Inject constructor(
 ) : Service(), IPartyManager {
 
     private val parties = mutableSetOf<Party>()
-    override fun getParties() = parties.toSet()
-    override fun partyOf(player: UUID) = parties.find { player in it.getMembers() }
-    private fun createParty(leader: UUID) =
+
+    /** Used for mutual exclusion when mutating [parties] and each party's members and invitations. */
+    private val partyLock = Any()
+
+    override fun getParties() = synchronized(partyLock) { parties.toSet() }
+    override fun partyOf(player: UUID) = synchronized(partyLock) { parties.find { player in it.getMembers() } }
+    private fun createParty(leader: UUID) = synchronized(partyLock) {
         Party(this, mutableListOf(leader), mutableMapOf(), _leader = leader).also { parties.add(it) }
+    }
 
     /**
      * Returns the username of the UUID, with an (optional) MiniMessage-formatted color prepended.
@@ -142,20 +147,24 @@ class PartyManager @Inject constructor(
         private var _leader: UUID,
         private var _marathon: Marathon? = null,
     ) {
-        val invitations: Map<UUID, Timer> get() = _invitations
+        val invitations: Map<UUID, Timer> get() = synchronized(svc.partyLock) { _invitations.toMap() }
         var marathon: Marathon?
             get() = _marathon
             set(value) {
-                _marathon = value
-                update()
+                synchronized(svc.partyLock) {
+                    _marathon = value
+                    update()
+                }
             }
 
         var leader: UUID
             get() = _leader
             set(value) {
-                val changed = _leader != value
-                _leader = value
-                if (changed) update()
+                synchronized(svc.partyLock) {
+                    val changed = _leader != value
+                    _leader = value
+                    if (changed) update()
+                }
             }
 
         init {
@@ -163,38 +172,86 @@ class PartyManager @Inject constructor(
         }
 
         fun add(player: UUID) {
-            members.add(player)
-            removeInvitation(player)
+            synchronized(svc.partyLock) {
+                members.add(player)
+                removeInvitation(player)
+            }
         }
 
         fun remove(player: UUID) {
-            members.remove(player)
-            update()
+            synchronized(svc.partyLock) {
+                members.remove(player)
+                update()
+            }
         }
 
-        fun getMembers() = members.toList()
+        fun getMembers() = synchronized(svc.partyLock) { members.toList() }
 
-        fun update() {
-            if (members.size <= 1 && invitations.isEmpty()) {
-                // If a party has no members and all invites expires, delete it
-                svc.playerTracker.sendChatAsync(members, "<red><lang:puffin.party.disband.auto>")
-                marathon?.end()
-                svc.parties.remove(this)
-                svc.partyUpdateCallbacks.forEach { it("remove", id, null) }
-            } else if (svc.playerTracker.getPlayer(leader) == null) {
-                // If the party leader left, transfer the party to one of the members
-                val member = members.first { it != leader }
-                val leaderUsername = svc.getUsername(leader)
-                svc.playerTracker.sendChatAsync(
-                    members,
-                    Utils.surroundWithSeparators(
-                        "<yellow><lang:puffin.party.transfer.auto:'${svc.getUsername(member)}':'$leaderUsername'>"
+        /**
+         * Re-evaluates the party against its invariants and must be called after every mutation:
+         *  - Parties always have at least one member besides the leader, unless there are outgoing
+         *    invitations (in which case a leader-only party may live until they expire).
+         *  - All members are online.
+         *  - The leader is always a member; if they leave or go offline, leadership is transferred.
+         */
+        fun update() = synchronized(svc.partyLock) {
+            // Prune members who have left the server (safety net if a logout was never reported).
+            val onlineMembers = members.filter { svc.playerTracker.getPlayer(it) != null }.distinct()
+            if (onlineMembers.size != members.size) {
+                val removed = members - onlineMembers
+                members.retainAll(onlineMembers)
+                removed.forEach {
+                    svc.playerTracker.sendChatAsync(
+                        members,
+                        Utils.surroundWithSeparators(
+                            "<red><lang:puffin.party.player_logged_out:'${
+                                svc.getUsername(
+                                    it
+                                )
+                            }'>"
+                        )
                     )
-                )
-                _leader = member
-            } else {
-                sendUpdate()
+                }
             }
+
+            // If the leader left or is offline, transfer leadership to another member.
+            if (leader !in members) {
+                val newLeader = members.firstOrNull { it != leader }
+                if (newLeader != null && canSurvive()) {
+                    svc.playerTracker.sendChatAsync(
+                        members,
+                        Utils.surroundWithSeparators(
+                            "<yellow><lang:puffin.party.transfer.auto:'${svc.getUsername(newLeader)}':'${
+                                svc.getUsername(
+                                    leader
+                                )
+                            }'>"
+                        )
+                    )
+                    _leader = newLeader
+                }
+            }
+
+            if (canSurvive()) {
+                sendUpdate()
+            } else {
+                dissolve()
+            }
+        }
+
+        /**
+         * A party is valid if it has at least one member besides the leader, or if the leader is alone
+         * but there are still outgoing invitations (it may live until those invitations expire).
+         */
+        private fun canSurvive() = members.size >= 2 || (members.size == 1 && invitations.isNotEmpty())
+
+        private fun dissolve() {
+            if (this !in svc.parties) return
+            svc.parties.remove(this)
+            svc.playerTracker.sendChatAsync(members, "<red><lang:puffin.party.disband.auto>")
+            marathon?.end()
+            _invitations.keys.forEach { _invitations.remove(it)?.cancel() }
+            svc.partyUpdateCallbacks.forEach { it("remove", id, null) }
         }
 
         private fun sendUpdate() {
@@ -202,23 +259,30 @@ class PartyManager @Inject constructor(
         }
 
         fun removeInvitation(player: UUID) {
-            _invitations.remove(player)
-            update()
+            synchronized(svc.partyLock) {
+                _invitations.remove(player)?.cancel()
+                update()
+            }
         }
 
         fun addInvitation(player: UUID, timer: Timer) {
-            _invitations[player] = timer
-            update()
+            synchronized(svc.partyLock) {
+                _invitations[player]?.cancel()
+                _invitations[player] = timer
+                update()
+            }
         }
     }
 
     override fun onLogout(player: UUID) {
-        val party = partyOf(player) ?: return
-        playerTracker.sendChatAsync(
-            party.getMembers(),
-            Utils.surroundWithSeparators("<red><lang:puffin.party.player_logged_out:'${player.name}'>")
-        )
-        party.remove(player)
+        synchronized(partyLock) {
+            val party = partyOf(player) ?: return
+            playerTracker.sendChatAsync(
+                party.getMembers(),
+                Utils.surroundWithSeparators("<red><lang:puffin.party.player_logged_out:'${player.name}'>")
+            )
+            party.remove(player)
+        }
     }
 
     override val partyService by lazy { PartyService() }
@@ -369,7 +433,7 @@ class PartyManager @Inject constructor(
                 playerTracker.sendChat(oldUuid, "<red><lang:puffin.party.transfer.not_leader>")
                 return Empty.getDefaultInstance()
             }
-            if (!party.getMembers().contains(oldUuid)) {
+            if (!party.getMembers().contains(newUuid) || playerTracker.getPlayer(newUuid) == null) {
                 playerTracker.sendChat(oldUuid, "<red><lang:puffin.party.member_not_found>")
                 return Empty.getDefaultInstance()
             }
