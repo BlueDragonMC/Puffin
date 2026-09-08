@@ -301,7 +301,7 @@ class GameServerManager @Inject constructor(
 
                 for (server in servers) {
                     for (game in server.games) {
-                        if (game.gameType.name == "Lobby") {
+                        if (game.gameType.name == Env.LOBBY_GAME_NAME) {
                             val info = getK8sObject(server.name) ?: continue
                             return ServiceDiscovery.FindLobbyResponse.newBuilder()
                                 .setFound(true)
@@ -325,8 +325,8 @@ class GameServerManager @Inject constructor(
                 val stub = k8sServiceDiscovery.getStubToServer(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
                 val response = stub.createInstance(
                     GsClient.CreateInstanceRequest.newBuilder()
-                        .setGame("Lobby")
-                        .setMapSource(mapsService.getAvailableMaps("Lobby", null, null, null).random())
+                        .setGame(Env.LOBBY_GAME_NAME)
+                        .setMapSource(mapsService.getAvailableMaps(Env.LOBBY_GAME_NAME, null, null, null).random())
                         .build()
                 )
 

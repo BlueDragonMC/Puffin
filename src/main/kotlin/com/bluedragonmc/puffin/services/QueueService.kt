@@ -5,6 +5,7 @@ import com.bluedragonmc.api.grpc.CommonTypes.EnumGameState
 import com.bluedragonmc.api.grpc.Queue
 import com.bluedragonmc.api.grpc.Queue.GetDestinationRequest
 import com.bluedragonmc.api.grpc.Queue.GetDestinationResponse
+import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
@@ -528,12 +529,19 @@ class QueueService @Inject constructor(
         override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty = handleRPC {
             val playerUuid = UUID.fromString(request.playerUuid)
             val party = partyManager.partyOf(playerUuid)
-            if (party != null && party.leader != playerUuid) {
+            val isLobby = request.gameType.name == Env.LOBBY_GAME_NAME
+            if (party != null && party.leader != playerUuid && !isLobby) {
                 playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
                 return@handleRPC Empty.getDefaultInstance()
             }
 
-            addToQueue(QueuedParty(party?.getMembers() ?: listOf(playerUuid), request.gameType))
+            val queuedPlayers = if (party != null && party.leader != playerUuid) {
+                // Non-leader party members may only queue themselves (e.g. to go to the lobby)
+                listOf(playerUuid)
+            } else {
+                party?.getMembers() ?: listOf(playerUuid)
+            }
+            addToQueue(QueuedParty(queuedPlayers, request.gameType))
 
             return Empty.getDefaultInstance()
         }
@@ -542,7 +550,7 @@ class QueueService @Inject constructor(
             for (request in request.requestsList) {
                 val uuid = UUID.fromString(request.playerUuid)
                 val party = partyManager.partyOf(uuid)
-                if (party == null || party.leader == uuid) {
+                if (party == null || party.leader == uuid || request.gameType.name == Env.LOBBY_GAME_NAME) {
                     addToQueue(request)
                 }
             }
