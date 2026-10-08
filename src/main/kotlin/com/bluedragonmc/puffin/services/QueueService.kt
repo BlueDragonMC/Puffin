@@ -42,6 +42,13 @@ private const val QUEUE_LOOP_RATE_LIMIT_PERIOD_MS: Long = 1_000
  */
 private const val QUEUE_PARTY_MAX_ATTEMPTS = 5
 
+/**
+ * Chooses which game servers new games may be created on. Up-to-date (non-draining) servers are
+ * preferred; draining servers are only used when every server is draining.
+ */
+internal fun placementCandidates(servers: List<QueueService.GameServer>): List<QueueService.GameServer> =
+    servers.filter { !it.draining }.ifEmpty { servers }
+
 interface IQueueService {
     fun getServers(): List<QueueService.GameServer>
     fun getServer(serverName: String): QueueService.GameServer?
@@ -61,6 +68,7 @@ interface IQueueService {
 
     fun removeServer(name: String)
     fun addServer(name: String)
+    fun setServerDraining(name: String, draining: Boolean)
     fun removeGame(serverName: String, gameId: String)
     fun getGamesMatching(gameType: CommonTypes.GameType): List<QueueService.Game>
     fun addGame(serverName: String, gameId: String, gameType: CommonTypes.GameType, gameState: CommonTypes.GameState)
@@ -333,13 +341,19 @@ class QueueService @Inject constructor(
 
             val newGames =
                 effectiveGames.takeLast(effectiveGames.size - games.size).take(MAX_GAMES_PER_CYCLE)
+            // Prefer servers that are up to date. Only use a draining server when all servers are draining.
+            val placementServers = placementCandidates(servers)
             // server id -> number of games on it
             val effectiveGameCounts = mutableMapOf<String, Int>()
-            servers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
+            placementServers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
             newGames.forEachIndexed { i, game ->
                 val mapSource = mapSources[i]
                 jobs += Puffin.IO.launch {
-                    val id = effectiveGameCounts.minBy { it.value }.key
+                    val id = effectiveGameCounts.minByOrNull { it.value }?.key
+                    if (id == null) {
+                        logger.warn("No game servers are available to create an instance for ${game.gameType}; will retry.")
+                        return@launch
+                    }
                     effectiveGameCounts[id] = effectiveGameCounts[id]!! + 1
                     logger.info("Creating instance with game type ${game.gameType} on server $id.")
                     k8sServiceDiscovery.getStubToServer(id)!!
@@ -381,7 +395,7 @@ class QueueService @Inject constructor(
     }
 
     data class GameServer(
-        val name: String, val games: List<Game>
+        val name: String, val games: List<Game>, val draining: Boolean = false
     )
 
     data class Game(
@@ -428,6 +442,16 @@ class QueueService @Inject constructor(
             }
         }
         Puffin.IO.launch { processQueue() }
+    }
+
+    override fun setServerDraining(name: String, draining: Boolean) {
+        data.withServersBlocking { servers ->
+            for ((i, server) in servers.withIndex()) {
+                if (server.name == name && server.draining != draining) {
+                    servers[i] = server.copy(draining = draining)
+                }
+            }
+        }
     }
 
     override fun removeGame(serverName: String, gameId: String) {

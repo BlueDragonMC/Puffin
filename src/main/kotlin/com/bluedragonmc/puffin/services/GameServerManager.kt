@@ -39,7 +39,8 @@ class GameServerManager @Inject constructor(
     val playerTracker: IPlayerTracker,
     val queueService: IQueueService,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val mapsService: MapService
+    val mapsService: MapService,
+    val versionResolver: ServerVersionResolver
 ) : Service(), IGameServerManager {
 
     private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
@@ -86,6 +87,7 @@ class GameServerManager @Inject constructor(
 
     @Synchronized
     fun reloadGameServers() {
+        refreshFleetVersions()
         val items = client.list().`object`.items
         val previousK8sObjects = ArrayList(kubernetesObjects)
         items.forEach { server ->
@@ -124,6 +126,8 @@ class GameServerManager @Inject constructor(
                 kubernetesObjects.remove(obj)
             }
         }
+
+        updateDraining()
     }
 
     private fun watch() {
@@ -197,6 +201,37 @@ class GameServerManager @Inject constructor(
             "gameServer", "add", gs.name,
             apiService.createJsonObjectForGameServer(gs)
         )
+        updateDraining(`object`)
+    }
+
+    private fun refreshFleetVersions() {
+        if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
+        versionResolver.refresh()
+    }
+
+    private fun updateDraining() {
+        if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
+        kubernetesObjects.forEach { updateDraining(it) }
+    }
+
+    /**
+     * Recomputes whether [object] is running an outdated version.
+     */
+    private fun updateDraining(`object`: DynamicKubernetesObject) {
+        if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
+        val gs = AgonesGameServer(`object`)
+        val draining = isOutdated(`object`)
+        val server = queueService.getServer(gs.name) ?: return
+        if (server.draining == draining) return
+        queueService.setServerDraining(gs.name, draining)
+        logger.info("GameServer ${gs.name} is now ${if (draining) "draining (outdated)" else "up to date"}.")
+        apiService.sendUpdate("gameServer", "patch", gs.name, apiService.createJsonObjectForGameServer(gs))
+    }
+
+    private fun isOutdated(`object`: DynamicKubernetesObject): Boolean {
+        val running = versionResolver.runningGeneration(`object`) ?: return false
+        val desired = versionResolver.desiredGeneration(`object`) ?: return false
+        return running != desired
     }
 
     private suspend fun syncExistingServer(serverName: String) {
@@ -299,7 +334,10 @@ class GameServerManager @Inject constructor(
                             (request.excludeServerNamesCount == 0 || !request.excludeServerNamesList.contains(gs.name))
                 }
 
-                for (server in servers) {
+                // Prefer servers that are up to date (not draining) if available.
+                val lobbyServers = servers.filter { !it.draining }.ifEmpty { servers }
+
+                for (server in lobbyServers) {
                     for (game in server.games) {
                         if (game.gameType.name == Env.LOBBY_GAME_NAME) {
                             val info = getK8sObject(server.name) ?: continue
@@ -314,12 +352,12 @@ class GameServerManager @Inject constructor(
                     }
                 }
 
-                if (servers.isEmpty()) {
+                if (lobbyServers.isEmpty()) {
                     return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
                 }
 
                 // Start up a lobby if one wasn't found
-                val bestServer = servers.minBy { queueService.getServer(it.name)?.games?.size ?: Integer.MAX_VALUE }
+                val bestServer = lobbyServers.minBy { queueService.getServer(it.name)?.games?.size ?: Integer.MAX_VALUE }
                 val info = getK8sObject(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
 
                 val stub = k8sServiceDiscovery.getStubToServer(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()

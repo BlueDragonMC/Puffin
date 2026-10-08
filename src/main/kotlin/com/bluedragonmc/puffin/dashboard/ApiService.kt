@@ -181,6 +181,7 @@ class ApiService @Inject constructor(
             addProperty("name", gs.name)
             addProperty("address", gs.address)
             addProperty("port", gs.port)
+            addProperty("draining", queueService.getServer(gs.name)?.draining ?: false)
             val instances = JsonArray().apply {
                 queueService.getServer(gs.name)?.games?.forEach { game -> add(game.id) }
             }

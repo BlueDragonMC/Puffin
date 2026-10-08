@@ -22,6 +22,7 @@ Environment variables:
 | `PUFFIN_MONGO_CONNECTION_STRING`  | A MongoDB connection string.                                                                                | mongodb://mongo:27017 |
 | `PUFFIN_LUCKPERMS_URL`            | The base URL used to interact with the LuckPerms REST API.                                                  | http://luckperms:8080 |
 | `PUFFIN_DEV_MODE`                 | Disables Kubernetes service discovery and uses the next two variables as placeholders for K8s services.     | false                 |
+| `PUFFIN_DRAIN_OUTDATED_SERVERS`   | When true, game servers running an out-of-date version are drained (no new games are created on them).      | true                  |
 | `PUFFIN_DEFAULT_GAMESERVER_IP`    | If `PUFFIN_DEV_MODE` is enabled, this is used as the only game server IP address.                           | minecraft             |
 | `PUFFIN_DEFAULT_PROXY_IP`         | If `PUFFIN_DEV_MODE` is enabled, this is used as the only proxy IP address.                                 | velocity              |
 | `PUFFIN_INSTANCE_START_PERIOD_MS` | The amount of milliseconds in between minimum instance checks                                               | 5000                  |

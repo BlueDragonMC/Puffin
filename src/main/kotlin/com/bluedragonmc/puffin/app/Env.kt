@@ -14,6 +14,10 @@ object Env {
 
     val DEV_MODE = System.getenv("PUFFIN_DEV_MODE")?.toBoolean() ?: false
 
+    // When true, game servers that are running an outdated version are drained: no new games are
+    // created on them until they are replaced by an up-to-date server.
+    val DRAIN_OUTDATED_SERVERS = System.getenv("PUFFIN_DRAIN_OUTDATED_SERVERS")?.toBoolean() ?: true
+
     val LOBBY_GAME_NAME = System.getenv("PUFFIN_LOBBY_GAME_NAME") ?: "Lobby"
 
     val DEFAULT_GS_IP = System.getenv("PUFFIN_DEFAULT_GAMESERVER_IP") ?: "minecraft"
