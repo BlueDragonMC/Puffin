@@ -59,11 +59,6 @@ interface IQueueService {
     suspend fun removeFromQueue(player: UUID): Boolean
 
     suspend fun processQueue()
-    suspend fun getBestAvailableInstance(
-        gameState: EnumGameState,
-        gameType: CommonTypes.GameType,
-        partySize: Int
-    ): Game?
 
     suspend fun removeServer(name: String)
     suspend fun addServer(name: String, address: String?, port: Int?)
@@ -366,8 +361,11 @@ class QueueService @Inject constructor(
                 effectiveGameCounts[id] = effectiveGameCounts[id]!! + 1
                 jobs += applicationScope.launch {
                     logger.info("Creating instance with game type ${game.gameType} on server $id.")
-                    k8sServiceDiscovery.getStubToServer(id)!!
-                        .withDeadline(Deadline.after(5, TimeUnit.SECONDS))
+                    val stub = k8sServiceDiscovery.getStubToServer(id) ?: run {
+                        logger.warn("Couldn't get a channel to server $id to create an instance; will retry.")
+                        return@launch
+                    }
+                    stub.withDeadline(Deadline.after(5, TimeUnit.SECONDS))
                         .createInstance(
                             GsClient.CreateInstanceRequest.newBuilder()
                                 .setGame(game.gameType.name)
@@ -403,17 +401,6 @@ class QueueService @Inject constructor(
 
         return maps.isNotEmpty()
     }
-
-    override suspend fun getBestAvailableInstance(
-        gameState: EnumGameState,
-        gameType: CommonTypes.GameType,
-        partySize: Int
-    ) =
-        data.withServers { servers ->
-            servers.flatMap { it.games }
-                .filter { game -> game.state == gameState && game.gameType matches gameType && game.emptySlots >= partySize }
-                .minByOrNull { it.emptySlots }
-        }
 
     private infix fun CommonTypes.GameType.matches(other: CommonTypes.GameType) =
         name == other.name && (!other.hasMode() || mode == other.mode) && (!other.hasMapId() || mapId == other.mapId)

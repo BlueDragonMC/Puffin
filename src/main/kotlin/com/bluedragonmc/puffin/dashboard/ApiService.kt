@@ -101,8 +101,7 @@ class ApiService @Inject constructor(
         }
 
         override fun onError(conn: WebSocket, ex: java.lang.Exception) {
-            logger.error("Error handling WebSocket connection $conn")
-            ex.printStackTrace()
+            logger.error("Error handling WebSocket connection $conn", ex)
         }
 
         override fun onStart() {
@@ -262,7 +261,7 @@ class ApiService @Inject constructor(
                 partyManager.getMembers(party).forEach { member -> add(member.toString()) }
             })
             addProperty("leader", partyManager.getLeader(party).toString())
-            add("invitations", JsonArray().apply { partyManager.getInvitations(party).forEach { add(it.toString()) } })
+            add("invitations", JsonArray().apply { partyManager.getInvitations(party).keys.forEach { add(it.toString()) } })
             val marathon = partyManager.getMarathon(party)
             if (marathon != null) {
                 add("marathon", JsonObject().apply {

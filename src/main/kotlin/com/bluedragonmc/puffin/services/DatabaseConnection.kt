@@ -63,7 +63,7 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
                 .url("${config.luckpermsApiUrl}/user/$uuid/meta")
                 .get()
                 .build()
-            val responseBody = httpClient.newCall(request).execute().body?.string()
+            val responseBody = httpClient.newCall(request).execute().body.string()
             val reply = gson.fromJson(responseBody, JsonObject::class.java)
             reply.get("meta")?.asJsonObject?.get("rankcolor")?.asString ?: "#aaaaaa"
         }
@@ -92,8 +92,6 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
 
     suspend fun putMapData(id: String, data: ByteArray) =
         mapDataCollection.updateOneById(id = id, update = MapData(data), options = upsert())
-
-    suspend fun getMapConfig(id: String) = mapConfigCollection.findOneById(id)
 
     suspend fun putMapConfig(id: String, data: String): UpdateResult =
         mapConfigCollection.updateOne(

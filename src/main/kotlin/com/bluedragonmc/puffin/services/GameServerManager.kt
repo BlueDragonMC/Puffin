@@ -14,6 +14,7 @@ import com.google.protobuf.Empty
 import io.grpc.StatusException
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -21,6 +22,19 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Duration
+
+/** The first backoff applied after a failed Agones watch. */
+private const val WATCH_INITIAL_BACKOFF_MS = 500L
+
+/** The maximum backoff between Agones watch attempts. */
+private const val WATCH_MAX_BACKOFF_MS = 30_000L
+
+/** A watch that stays up at least this long is considered healthy and reconnects immediately. */
+private const val WATCH_STABLE_MILLIS = 10_000L
+
+/** Exponential backoff for the Agones watch, starting at [WATCH_INITIAL_BACKOFF_MS] and capped. */
+private fun nextWatchBackoff(current: Long): Long =
+    if (current == 0L) WATCH_INITIAL_BACKOFF_MS else (current * 2).coerceAtMost(WATCH_MAX_BACKOFF_MS)
 
 interface IGameServerManager {
     suspend fun getK8sObject(serverName: String): GameServer?
@@ -80,11 +94,29 @@ class GameServerManager @Inject constructor(
 
     override fun start() {
         applicationScope.launch {
+            var backoffMillis = 0L
             while (true) {
-                reloadGameServers()
-                watch()
-                logger.error("There was a problem watching Agones resources. Retrying...")
-                delay(5_000)
+                try {
+                    reloadGameServers()
+                    val watchStart = System.nanoTime()
+                    watch()
+                    val ranMillis = (System.nanoTime() - watchStart) / 1_000_000
+                    if (ranMillis >= WATCH_STABLE_MILLIS) {
+                        // If the watch stayed active for >= 10 seconds, retry immediately
+                        backoffMillis = 0L
+                        logger.warn("Agones watch ended; reconnecting...")
+                    } else {
+                        // If the watch wasn't active for very long, consider it an error and retry with backoff
+                        backoffMillis = nextWatchBackoff(backoffMillis)
+                        logger.warn("Agones watch ended after only ${ranMillis}ms; retrying in ${backoffMillis}ms...")
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    backoffMillis = nextWatchBackoff(backoffMillis)
+                    logger.error("Error watching Agones resources; retrying in ${backoffMillis}ms...", e)
+                }
+                if (backoffMillis > 0) delay(backoffMillis)
             }
         }
 
@@ -164,11 +196,12 @@ class GameServerManager @Inject constructor(
                         if (old != obj) {
                             notifyListeners(GameServerEvent.Merged(AgonesGameServer(old), AgonesGameServer(obj)))
                         }
-                        logger.debug("Game server '${obj.metadata.name}' is now in state: $newState")
-                        if (newState == "Ready" && !readyGameServers.contains(obj.metadata.name)) {
+                        val serverName = obj.metadata.name!!
+                        logger.debug("Game server '$serverName' is now in state: $newState")
+                        if (newState == "Ready" && !readyGameServers.contains(serverName)) {
                             // If the server changed from any other state to ready (and it hasn't been ready before),
                             // attempt to ping it and look at its players and instances.
-                            readyGameServers.add(obj.metadata.name!!)
+                            readyGameServers.add(serverName)
                             processServerAdded(obj)
                         }
                     }
@@ -284,8 +317,7 @@ class GameServerManager @Inject constructor(
             } catch (e: ApiException) {
                 // If there was an error looking up the pod, it likely no longer exists.
                 // This means there was some sort of desync between our watch and the reality in the cluster.
-                e.printStackTrace()
-                logger.warn("Tried to sync server $serverName, but it doesn't exist! Starting a manual sync...")
+                logger.warn("Tried to sync server $serverName, but it doesn't exist! Starting a manual sync...", e)
                 reloadGameServers()
                 return
             }
@@ -294,8 +326,7 @@ class GameServerManager @Inject constructor(
             syncAttempts.put(serverName, attempts + 1)
 
             if (attempts > 10) {
-                logger.warn("Failed to sync players and instances with server $serverName after 10 attempts.")
-                e.printStackTrace()
+                logger.warn("Failed to sync players and instances with server $serverName after 10 attempts.", e)
                 return
             }
 
