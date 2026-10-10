@@ -14,7 +14,9 @@ import com.google.inject.Inject
 import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import io.grpc.Deadline
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Duration
@@ -220,10 +222,11 @@ class QueueService @Inject constructor(
 
     private suspend fun removeAllParties(shouldRemove: suspend (QueuedParty) -> Boolean) {
         val collection = data.withParties { parties -> ArrayList(parties) }
-        val elementsToRemove = coroutineScope {
-            collection.map { async { if (shouldRemove(it)) it else null } }
-                .awaitAll()
-                .filterNotNullTo(mutableSetOf())
+        val elementsToRemove = mutableSetOf<QueuedParty>()
+        for (party in collection) {
+            if (shouldRemove(party)) {
+                elementsToRemove += party
+            }
         }
         data.withParties { parties ->
             parties.removeAll(elementsToRemove)
@@ -343,13 +346,13 @@ class QueueService @Inject constructor(
             placementServers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
             newGames.forEachIndexed { i, game ->
                 val mapSource = mapSources[i]
+                val id = effectiveGameCounts.minByOrNull { it.value }?.key
+                if (id == null) {
+                    logger.warn("No game servers are available to create an instance for ${game.gameType}; will retry.")
+                    return@forEachIndexed
+                }
+                effectiveGameCounts[id] = effectiveGameCounts[id]!! + 1
                 jobs += applicationScope.launch {
-                    val id = effectiveGameCounts.minByOrNull { it.value }?.key
-                    if (id == null) {
-                        logger.warn("No game servers are available to create an instance for ${game.gameType}; will retry.")
-                        return@launch
-                    }
-                    effectiveGameCounts[id] = effectiveGameCounts[id]!! + 1
                     logger.info("Creating instance with game type ${game.gameType} on server $id.")
                     k8sServiceDiscovery.getStubToServer(id)!!
                         .withDeadline(Deadline.after(5, TimeUnit.SECONDS))

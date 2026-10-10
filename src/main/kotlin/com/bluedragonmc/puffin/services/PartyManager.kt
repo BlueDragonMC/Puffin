@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 
 interface IPartyManager {
@@ -81,7 +82,7 @@ class PartyManager @Inject constructor(
         private val svc: PartyManager,
         val party: Party,
         val endsAt: Long,
-        private val points: MutableMap<UUID, Int>
+        private val points: ConcurrentHashMap<UUID, Int>
     ) {
 
         private var cancelJob: Job
@@ -98,7 +99,7 @@ class PartyManager @Inject constructor(
         }
 
         fun addPoints(uuid: UUID, amount: Int) {
-            points[uuid] = points[uuid]?.plus(amount) ?: amount
+            points.merge(uuid, amount, Int::plus)
             party.update()
         }
 
@@ -112,11 +113,12 @@ class PartyManager @Inject constructor(
         fun getPoints() = points.toMap()
 
         suspend fun formatLeaderboard(): String {
-            if (points.isEmpty()) {
+            val snapshot = points.toMap()
+            if (snapshot.isEmpty()) {
                 return "<gray><lang:puffin.party.marathon.current_leaderboard.no_points>"
             }
             val fancyNumbers = "➀➁➂➃➄➅➆➇➈➉"
-            var str = points.entries
+            var str = snapshot.entries
                 .sortedByDescending { (_, points) -> points }
                 .take(10)
                 .mapIndexed { index, (uuid, points) ->
@@ -129,8 +131,8 @@ class PartyManager @Inject constructor(
                     return@mapIndexed "<$color>${fancyNumbers[index]} ${party.svc.getUsername(uuid)}<p1>: <yellow>${points}"
                 }
                 .joinToString("\n")
-            if (points.size > 10) {
-                str += "\n<gray>... (+${points.size - 10} more)"
+            if (snapshot.size > 10) {
+                str += "\n<gray>... (+${snapshot.size - 10} more)"
             }
             return str
         }
@@ -531,7 +533,7 @@ class PartyManager @Inject constructor(
             }
 
             party.marathon =
-                Marathon(this@PartyManager, party, System.currentTimeMillis() + request.durationMs, mutableMapOf())
+                Marathon(this@PartyManager, party, System.currentTimeMillis() + request.durationMs, ConcurrentHashMap())
 
             val minutes = request.durationMs / 1000 / 60
             playerTracker.sendChat(

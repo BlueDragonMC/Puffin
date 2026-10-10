@@ -55,29 +55,36 @@ class PlayerTracker @Inject constructor(
     val applicationScope: ApplicationScope
 ) : Service(), IPlayerTracker {
 
+    private val playersLock = Any()
     private val players = mutableMapOf<UUID, PlayerState>()
+
+    /** Runs [block] while holding [playersLock]; the lock guards every access to [players]. */
+    private inline fun <R> withPlayers(block: () -> R): R = synchronized(playersLock) { block() }
 
     data class PlayerState(val proxyPodName: String?, val gameServerName: String?, val gameId: String?)
 
-    override fun getPlayer(uuid: UUID) = players[uuid]
+    override fun getPlayer(uuid: UUID) = withPlayers { players[uuid] }
 
-    override fun getPlayers() = players.toMap()
+    override fun getPlayers() = withPlayers { players.toMap() }
 
-    override fun getPlayersInInstance(gameId: String) = players
-        .filter { (_, state) -> state.gameId == gameId }
-        .map { it.key }
+    override fun getPlayersInInstance(gameId: String) = withPlayers {
+        players.filter { (_, state) -> state.gameId == gameId }
+            .map { it.key }
+    }
 
-    override fun getPlayersOnProxy(podName: String) = players
-        .filter { (_, state) -> state.proxyPodName == podName }
-        .map { it.key }
+    override fun getPlayersOnProxy(podName: String) = withPlayers {
+        players.filter { (_, state) -> state.proxyPodName == podName }
+            .map { it.key }
+    }
 
-    override fun getPlayersInGameServer(serverName: String) = players
-        .filter { (_, state) -> state.gameServerName == serverName }
-        .map { it.key }
+    override fun getPlayersInGameServer(serverName: String) = withPlayers {
+        players.filter { (_, state) -> state.gameServerName == serverName }
+            .map { it.key }
+    }
 
-    override fun removePlayer(uuid: UUID) = players.remove(uuid)
+    override fun removePlayer(uuid: UUID) = withPlayers { players.remove(uuid) }
 
-    override fun setProxy(player: UUID, proxyPodName: String?) {
+    override fun setProxy(player: UUID, proxyPodName: String?) = withPlayers {
         players[player] = players[player]?.copy(proxyPodName = proxyPodName) ?: PlayerState(
             proxyPodName = proxyPodName,
             null,
@@ -85,7 +92,7 @@ class PlayerTracker @Inject constructor(
         )
     }
 
-    override fun setServer(player: UUID, gameServerName: String?) {
+    override fun setServer(player: UUID, gameServerName: String?) = withPlayers {
         players[player] = players[player]?.copy(gameServerName = gameServerName) ?: PlayerState(
             null,
             gameServerName = gameServerName,
@@ -94,20 +101,21 @@ class PlayerTracker @Inject constructor(
     }
 
     override suspend fun setGameId(player: UUID, gameId: String?) {
-        val old = players[player]?.gameId
-        players[player] = players[player]?.copy(gameId = gameId) ?: PlayerState(
-            null,
-            null,
-            gameId = gameId,
-        )
-        if (gameId != old && gameId != null) {
+        val changed = withPlayers {
+            val old = players[player]?.gameId
+            players[player] = players[player]?.copy(gameId = gameId) ?: PlayerState(
+                null,
+                null,
+                gameId = gameId,
+            )
+            gameId != old && gameId != null
+        }
+        if (changed) {
             queueService.removeFromQueue(player)
         }
     }
 
-    override fun close() {
-        players.clear()
-    }
+    override fun close() = withPlayers { players.clear() }
 
     override fun updateGameServerPlayers(serverName: String, response: PlayerHolderOuterClass.GetPlayersResponse) {
         val existingPlayers = getPlayersInGameServer(serverName)
@@ -153,22 +161,24 @@ class PlayerTracker @Inject constructor(
 
     override suspend fun getPlayerCount(gameType: CommonTypes.GameType?): Int {
         return if (gameType == null) {
-            players.size
+            withPlayers { players.size }
         } else {
             // Get a list of matching instances
             val instances = queueService.getGamesMatching(gameType).map { it.id }
             // Count the amount of players in any of these instances
-            players.entries.count { (_, state) -> state.gameId != null && instances.contains(state.gameId) }
+            withPlayers { players.entries.count { (_, state) -> state.gameId != null && instances.contains(state.gameId) } }
         }
     }
 
     suspend fun cleanup() {
-        players.entries.removeIf { (_, player) ->
-            player.gameId == null && player.gameServerName == null && player.proxyPodName == null
+        withPlayers {
+            players.entries.removeIf { (_, player) ->
+                player.gameId == null && player.gameServerName == null && player.proxyPodName == null
+            }
         }
         val servers = queueService.getServers()
         val proxies = k8sServiceDiscovery.getAllProxies()
-        for ((player, state) in players.entries) {
+        for ((player, state) in getPlayers()) {
             if (servers.none { it.name == state.gameServerName }) {
                 setServer(player, null)
             }
@@ -211,9 +221,10 @@ class PlayerTracker @Inject constructor(
         sendChat(player, message, chatType)
     }
 
-    override fun sendChatAsync(player: UUID, chatType: ChatType, message: suspend () -> String) = applicationScope.launch {
-        sendChat(player, message(), chatType)
-    }
+    override fun sendChatAsync(player: UUID, chatType: ChatType, message: suspend () -> String) =
+        applicationScope.launch {
+            sendChat(player, message(), chatType)
+        }
 
     override suspend fun sendChat(players: Collection<UUID>, message: String, chatType: ChatType) {
         for (player in players) sendChat(player, message, chatType)
@@ -260,7 +271,7 @@ class PlayerTracker @Inject constructor(
         override suspend fun playerLogout(request: PlayerTrackerOuterClass.PlayerLogoutRequest): Empty = handleRPC {
             // Called when a player logs out of or otherwise disconnects from a proxy.
             val uuid = UUID.fromString(request.uuid)
-            val oldState = players.remove(uuid)
+            val oldState = removePlayer(uuid)
             logger.info("Logout > ${request.username} $oldState")
             logoutCallbacks.forEach { it(uuid) }
             databaseConnection.evictCachesForPlayer(uuid)
@@ -310,7 +321,7 @@ class PlayerTracker @Inject constructor(
                             val foundUuid = databaseConnection.getPlayerUUID(username)
                             foundUuid?.let {
                                 uuid = it.toString()
-                                isOnline = players.containsKey(it)
+                                isOnline = getPlayer(it) != null
                             }
                         }
                     }
@@ -319,7 +330,7 @@ class PlayerTracker @Inject constructor(
                         val uuidIn = UUID.fromString(request.uuid)
                         return queryPlayerResponse {
                             uuid = request.uuid
-                            isOnline = players.containsKey(uuidIn)
+                            isOnline = getPlayer(uuidIn) != null
                             val foundUsername = databaseConnection.getPlayerName(uuidIn)
                             foundUsername?.let {
                                 username = it

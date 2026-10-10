@@ -26,7 +26,7 @@ import kotlinx.coroutines.sync.withLock
 import java.time.Duration
 
 interface IGameServerManager {
-    fun getK8sObject(serverName: String): GameServerManager.AgonesGameServer?
+    suspend fun getK8sObject(serverName: String): GameServerManager.AgonesGameServer?
 
     val serviceDiscoveryService: GameServerManager.ServerDiscoveryService
     val instanceService: GameServerManager.InstanceService
@@ -46,8 +46,6 @@ class GameServerManager @Inject constructor(
     val applicationScope: ApplicationScope
 ) : Service(), IGameServerManager {
 
-    private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
-
     private val client = DynamicKubernetesApi("agones.dev", "v1", "gameservers", Config.defaultClient())
     private val defaultApi = CoreV1Api(Config.defaultClient())
 
@@ -55,6 +53,10 @@ class GameServerManager @Inject constructor(
         .expireAfterWrite(Duration.ofMinutes(2))
         .build<String, Int>()
 
+    /** Guards all access to [kubernetesObjects] and [readyGameServers]. */
+    private val stateMutex = Mutex()
+
+    private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
     private val readyGameServers = mutableListOf<String>()
 
     init {
@@ -89,9 +91,7 @@ class GameServerManager @Inject constructor(
         }
     }
 
-    private val reloadMutex = Mutex()
-
-    suspend fun reloadGameServers() = reloadMutex.withLock {
+    suspend fun reloadGameServers() = stateMutex.withLock {
         refreshFleetVersions()
         val items = client.list().`object`.items
         val previousK8sObjects = ArrayList(kubernetesObjects)
@@ -138,48 +138,50 @@ class GameServerManager @Inject constructor(
     private suspend fun watch() {
         val watch = client.watch()
         watch.forEach { event ->
-            val obj = event.`object`
-            val newState = obj.raw.get("status")?.asJsonObject?.get("state")?.asString
-            when (event.type) {
-                "ADDED" -> {
-                    // A new game server was added
-                    if (kubernetesObjects.none { it.metadata.uid == obj.metadata.uid }) {
-                        kubernetesObjects.add(obj)
+            stateMutex.withLock {
+                val obj = event.`object`
+                val newState = obj.raw.get("status")?.asJsonObject?.get("state")?.asString
+                when (event.type) {
+                    "ADDED" -> {
+                        // A new game server was added
+                        if (kubernetesObjects.none { it.metadata.uid == obj.metadata.uid }) {
+                            kubernetesObjects.add(obj)
+                        }
                     }
-                }
 
-                "MODIFIED" -> {
-                    // An existing game server had its metadata or other information change
-                    val index = kubernetesObjects.indexOfFirst { it.metadata.uid == obj.metadata.uid }
-                    val old = kubernetesObjects[index]
-                    kubernetesObjects[index] = obj
-                    if (old != obj) {
-                        apiService.sendMerge(
-                            "gameServer", "patch", obj.metadata.name!!,
-                            apiService.createJsonObjectForGameServer(AgonesGameServer(old)),
-                            apiService.createJsonObjectForGameServer(AgonesGameServer(obj))
-                        )
+                    "MODIFIED" -> {
+                        // An existing game server had its metadata or other information change
+                        val index = kubernetesObjects.indexOfFirst { it.metadata.uid == obj.metadata.uid }
+                        val old = kubernetesObjects[index]
+                        kubernetesObjects[index] = obj
+                        if (old != obj) {
+                            apiService.sendMerge(
+                                "gameServer", "patch", obj.metadata.name!!,
+                                apiService.createJsonObjectForGameServer(AgonesGameServer(old)),
+                                apiService.createJsonObjectForGameServer(AgonesGameServer(obj))
+                            )
+                        }
+                        logger.debug("Game server '${obj.metadata.name}' is now in state: $newState")
+                        if (newState == "Ready" && !readyGameServers.contains(obj.metadata.name)) {
+                            // If the server changed from any other state to ready (and it hasn't been ready before),
+                            // attempt to ping it and look at its players and instances.
+                            readyGameServers.add(obj.metadata.name!!)
+                            processServerAdded(obj)
+                        }
                     }
-                    logger.debug("Game server '${obj.metadata.name}' is now in state: $newState")
-                    if (newState == "Ready" && !readyGameServers.contains(obj.metadata.name)) {
-                        // If the server changed from any other state to ready (and it hasn't been ready before),
-                        // attempt to ping it and look at its players and instances.
-                        readyGameServers.add(obj.metadata.name!!)
-                        processServerAdded(obj)
-                    }
-                }
 
-                "DELETED" -> {
-                    // A game server was removed
-                    val removed = kubernetesObjects.removeIf { it.metadata.uid == obj.metadata.uid }
-                    if (removed) {
-                        processServerRemoved(obj)
-                    } else {
-                        logger.warn("Unknown GameServer was deleted: ${obj.metadata.name}")
+                    "DELETED" -> {
+                        // A game server was removed
+                        val removed = kubernetesObjects.removeIf { it.metadata.uid == obj.metadata.uid }
+                        if (removed) {
+                            processServerRemoved(obj)
+                        } else {
+                            logger.warn("Unknown GameServer was deleted: ${obj.metadata.name}")
+                        }
                     }
-                }
 
-                else -> logger.warn("Unknown Kubernetes API event type: ${event.type}")
+                    else -> logger.warn("Unknown Kubernetes API event type: ${event.type}")
+                }
             }
         }
     }
@@ -325,8 +327,8 @@ class GameServerManager @Inject constructor(
         override val name = `object`.metadata.name!!
     }
 
-    override fun getK8sObject(serverName: String): AgonesGameServer? {
-        return kubernetesObjects.map { AgonesGameServer(it) }.find { it.name == serverName }
+    override suspend fun getK8sObject(serverName: String): AgonesGameServer? = stateMutex.withLock {
+        kubernetesObjects.map { AgonesGameServer(it) }.find { it.name == serverName }
     }
 
     override val serviceDiscoveryService by lazy { ServerDiscoveryService() }
