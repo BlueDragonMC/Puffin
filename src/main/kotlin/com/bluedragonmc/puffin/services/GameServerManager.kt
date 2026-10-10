@@ -5,7 +5,6 @@ import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
-import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
@@ -29,8 +28,22 @@ import java.time.Duration
 interface IGameServerManager {
     suspend fun getK8sObject(serverName: String): GameServerManager.AgonesGameServer?
 
+    fun registerGameServerListener(listener: suspend (GameServerEvent) -> Unit)
+
     val serviceDiscoveryService: GameServerManager.ServerDiscoveryService
     val instanceService: GameServerManager.InstanceService
+}
+
+/**
+ * Notifications emitted by [GameServerManager] about game servers and their instances.
+ */
+sealed interface GameServerEvent {
+    data class Added(val server: GameServerManager.GameServer) : GameServerEvent
+    data class Removed(val name: String) : GameServerEvent
+    data class Merged(val old: GameServerManager.GameServer, val new: GameServerManager.GameServer) : GameServerEvent
+    data class Updated(val server: GameServerManager.GameServer) : GameServerEvent
+    data class InstanceAdded(val gameId: String) : GameServerEvent
+    data class InstanceRemoved(val gameId: String) : GameServerEvent
 }
 
 /**
@@ -38,7 +51,6 @@ interface IGameServerManager {
  */
 @Singleton
 class GameServerManager @Inject constructor(
-    val apiService: IApiService,
     val playerTracker: IPlayerTracker,
     val queueService: IQueueService,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
@@ -59,6 +71,16 @@ class GameServerManager @Inject constructor(
 
     private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
     private val readyGameServers = mutableListOf<String>()
+
+    private val gameServerListeners = mutableListOf<suspend (GameServerEvent) -> Unit>()
+
+    override fun registerGameServerListener(listener: suspend (GameServerEvent) -> Unit) {
+        gameServerListeners.add(listener)
+    }
+
+    private suspend fun notifyListeners(event: GameServerEvent) {
+        gameServerListeners.forEach { it(event) }
+    }
 
     init {
         if (!DEV_MODE) {
@@ -110,13 +132,7 @@ class GameServerManager @Inject constructor(
                     val old = kubernetesObjects[index]
                     kubernetesObjects[index] = server
                     if (old != server) {
-                        apiService.apply {
-                            sendMerge(
-                                "gameServer", "patch", server.metadata.name!!,
-                                createJsonObjectForGameServer(AgonesGameServer(old)),
-                                createJsonObjectForGameServer(AgonesGameServer(server))
-                            )
-                        }
+                        notifyListeners(GameServerEvent.Merged(AgonesGameServer(old), AgonesGameServer(server)))
                     }
                 }
             }
@@ -153,11 +169,7 @@ class GameServerManager @Inject constructor(
                         val old = kubernetesObjects[index]
                         kubernetesObjects[index] = obj
                         if (old != obj) {
-                            apiService.sendMerge(
-                                "gameServer", "patch", obj.metadata.name!!,
-                                apiService.createJsonObjectForGameServer(AgonesGameServer(old)),
-                                apiService.createJsonObjectForGameServer(AgonesGameServer(obj))
-                            )
+                            notifyListeners(GameServerEvent.Merged(AgonesGameServer(old), AgonesGameServer(obj)))
                         }
                         logger.debug("Game server '${obj.metadata.name}' is now in state: $newState")
                         if (newState == "Ready" && !readyGameServers.contains(obj.metadata.name)) {
@@ -190,7 +202,7 @@ class GameServerManager @Inject constructor(
         queueService.removeServer(gs.name)
         readyGameServers.remove(gs.name)
         Utils.closeChannel(gs.address)
-        apiService.sendUpdate("gameServer", "remove", gs.name, null)
+        notifyListeners(GameServerEvent.Removed(gs.name))
     }
 
     private suspend fun processServerAdded(`object`: DynamicKubernetesObject) {
@@ -202,10 +214,7 @@ class GameServerManager @Inject constructor(
         applicationScope.launch {
             syncNewServer(gs.name)
         }
-        apiService.sendUpdate(
-            "gameServer", "add", gs.name,
-            apiService.createJsonObjectForGameServer(gs)
-        )
+        notifyListeners(GameServerEvent.Added(gs))
         updateDraining(`object`)
     }
 
@@ -230,7 +239,7 @@ class GameServerManager @Inject constructor(
         if (server.draining == draining) return
         queueService.setServerDraining(gs.name, draining)
         logger.info("GameServer ${gs.name} is now ${if (draining) "draining (outdated)" else "up to date"}.")
-        apiService.sendUpdate("gameServer", "patch", gs.name, apiService.createJsonObjectForGameServer(gs))
+        notifyListeners(GameServerEvent.Updated(gs))
     }
 
     private fun isOutdated(`object`: DynamicKubernetesObject): Boolean {
@@ -423,15 +432,12 @@ class GameServerManager @Inject constructor(
         )
         queueService.addGame(request.serverName, request.instanceUuid, request.gameType, request.gameState)
 
-        apiService.sendUpdate(
-            "instance", "add", request.instanceUuid,
-            apiService.createJsonObjectForGame(request.instanceUuid)
-        )
+        notifyListeners(GameServerEvent.InstanceAdded(request.instanceUuid))
     }
 
     private suspend fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
         logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
         queueService.removeGame(request.serverName, request.instanceUuid)
-        apiService.sendUpdate("instance", "remove", request.instanceUuid, null)
+        notifyListeners(GameServerEvent.InstanceRemoved(request.instanceUuid))
     }
 }

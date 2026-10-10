@@ -154,6 +154,32 @@ class ApiService @Inject constructor(
         partyManager.registerPartyUpdateCallback { action, id, updated ->
             sendUpdate("party", action, id, updated)
         }
+
+        gameServerManager.registerGameServerListener { event ->
+            when (event) {
+                is GameServerEvent.Added ->
+                    sendUpdate("gameServer", "add", event.server.name, createJsonObjectForGameServer(event.server))
+
+                is GameServerEvent.Removed ->
+                    sendUpdate("gameServer", "remove", event.name, null)
+
+                is GameServerEvent.Merged ->
+                    sendMerge(
+                        "gameServer", "patch", event.new.name,
+                        createJsonObjectForGameServer(event.old),
+                        createJsonObjectForGameServer(event.new)
+                    )
+
+                is GameServerEvent.Updated ->
+                    sendUpdate("gameServer", "patch", event.server.name, createJsonObjectForGameServer(event.server))
+
+                is GameServerEvent.InstanceAdded ->
+                    sendUpdate("instance", "add", event.gameId, createJsonObjectForGame(event.gameId))
+
+                is GameServerEvent.InstanceRemoved ->
+                    sendUpdate("instance", "remove", event.gameId, null)
+            }
+        }
     }
 
     override fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?) {
