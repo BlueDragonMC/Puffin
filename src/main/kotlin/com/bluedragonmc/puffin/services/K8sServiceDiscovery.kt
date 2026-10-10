@@ -63,9 +63,6 @@ class K8sServiceDiscovery @Inject constructor(
         .build<String, String?>()
 
     override fun start() {
-        // Kubernetes isn't expected in development mode
-        if (config.devMode) return
-
         // Perform an initial sync immediately, then keep it up to date periodically.
         applicationScope.launch { periodicSync() }
         applicationScope.repeatingTask(
@@ -123,9 +120,6 @@ class K8sServiceDiscovery @Inject constructor(
      * Gets the pod IP address of the specified pod
      */
     override suspend fun getProxyIP(podName: String): String? {
-        if (config.devMode) {
-            return config.defaultProxyIp
-        }
         return withContext(Dispatchers.IO) {
             serverAddresses.get(podName) {
                 val pod = kubernetesClients.coreV1.readNamespacedPod(podName, config.k8sNamespace).execute()
@@ -140,9 +134,6 @@ class K8sServiceDiscovery @Inject constructor(
      * address, because it is only accessible from inside the cluster.
      */
     override suspend fun getGameServerIP(serverName: String): String? {
-        if (config.devMode) {
-            return config.defaultGsIp
-        }
         return withContext(Dispatchers.IO) {
             serverAddresses.get(serverName) {
                 val pod = kubernetesClients.coreV1.readNamespacedPod(serverName, config.k8sNamespace).execute()

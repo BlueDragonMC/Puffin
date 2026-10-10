@@ -79,8 +79,6 @@ class GameServerManager @Inject constructor(
     }
 
     override fun start() {
-        if (config.devMode) return
-
         applicationScope.launch {
             while (true) {
                 reloadGameServers()
@@ -214,12 +212,12 @@ class GameServerManager @Inject constructor(
     }
 
     private fun refreshFleetVersions() {
-        if (config.devMode || !config.drainOutdatedServers) return
+        if (!config.drainOutdatedServers) return
         versionResolver.refresh()
     }
 
     private suspend fun updateDraining() {
-        if (config.devMode || !config.drainOutdatedServers) return
+        if (!config.drainOutdatedServers) return
         kubernetesObjects.forEach { updateDraining(it) }
     }
 
@@ -227,7 +225,7 @@ class GameServerManager @Inject constructor(
      * Recomputes whether [object] is running an outdated version.
      */
     private suspend fun updateDraining(`object`: DynamicKubernetesObject) {
-        if (config.devMode || !config.drainOutdatedServers) return
+        if (!config.drainOutdatedServers) return
         val gs = AgonesGameServer(`object`)
         val draining = isOutdated(`object`)
         val server = queueService.getServer(gs.name) ?: return
@@ -281,8 +279,6 @@ class GameServerManager @Inject constructor(
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {
-            if (config.devMode) return
-
             try {
                 withContext(Dispatchers.IO) { kubernetesClients.coreV1.readNamespacedPod(serverName, config.k8sNamespace).execute() }
             } catch (e: ApiException) {

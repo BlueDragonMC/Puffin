@@ -17,16 +17,11 @@ class PuffinConfig {
 
     val luckpermsApiUrl = System.getenv("PUFFIN_LUCKPERMS_URL") ?: "http://luckperms:8080"
 
-    val devMode = System.getenv("PUFFIN_DEV_MODE")?.toBoolean() ?: false
-
     // When true, game servers that are running an outdated version are drained: no new games are
     // created on them until they are replaced by an up-to-date server.
     val drainOutdatedServers = System.getenv("PUFFIN_DRAIN_OUTDATED_SERVERS")?.toBoolean() ?: true
 
     val lobbyGameName = System.getenv("PUFFIN_LOBBY_GAME_NAME") ?: "Lobby"
-
-    val defaultGsIp = System.getenv("PUFFIN_DEFAULT_GAMESERVER_IP") ?: "minecraft"
-    val defaultProxyIp = System.getenv("PUFFIN_DEFAULT_PROXY_IP") ?: "velocity"
 
     // The amount of milliseconds in between game server syncs
     val gsSyncPeriod = System.getenv("PUFFIN_GS_SYNC_PERIOD_MS")?.toLongOrNull() ?: 10_000L

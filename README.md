@@ -27,11 +27,8 @@ Environment variables:
 | `PUFFIN_WORLD_FOLDER`             | The worlds folder, as described in the [docs](https://developer.bluedragonmc.com/reference/worlds-folder/). | /puffin/worlds/            |
 | `PUFFIN_MONGO_CONNECTION_STRING`  | A MongoDB connection string.                                                                                | mongodb://mongo:27017      |
 | `PUFFIN_LUCKPERMS_URL`            | The base URL used to interact with the LuckPerms REST API.                                                  | http://luckperms:8080      |
-| `PUFFIN_DEV_MODE`                 | Disables Kubernetes service discovery and uses the two `PUFFIN_DEFAULT_*_IP` variables as placeholders.    | false                      |
 | `PUFFIN_DRAIN_OUTDATED_SERVERS`   | When true, game servers running an out-of-date version are drained (no new games are created on them).      | true                       |
 | `PUFFIN_LOBBY_GAME_NAME`          | The name of the game type used for lobbies.                                                                 | Lobby                      |
-| `PUFFIN_DEFAULT_GAMESERVER_IP`    | If `PUFFIN_DEV_MODE` is enabled, this is used as the only game server IP address.                           | minecraft                  |
-| `PUFFIN_DEFAULT_PROXY_IP`         | If `PUFFIN_DEV_MODE` is enabled, this is used as the only proxy IP address.                                 | velocity                   |
 | `PUFFIN_GS_SYNC_PERIOD_MS`        | The amount of milliseconds in between game server syncs                                                     | 10000                      |
 | `PUFFIN_K8S_SYNC_PERIOD_MS`       | The amount of milliseconds in between proxy syncs                                                           | 10000                      |
 | `PUFFIN_GAMESERVER_GRPC_PORT`     | The port used to create gRPC channels to game servers                                                       | 50051                      |

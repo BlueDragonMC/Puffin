@@ -25,8 +25,6 @@ class Puffin {
         val start = System.nanoTime()
 
         val injector = Guice.createInjector(module)
-        val config = injector.getInstance(PuffinConfig::class.java)
-        if (config.devMode) logger.warn("Starting Puffin in development mode.")
 
         val applicationScope = injector.getInstance(ApplicationScope::class.java)
         val grpcChannels = injector.getInstance(GrpcChannels::class.java)
