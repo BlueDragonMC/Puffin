@@ -517,9 +517,12 @@ class QueueService @Inject constructor(
         val serverName = getServerOfGame(gameId)!!
 
         val channel = if (currentGameServer != serverName) {
+            // Send to the proxy if we're routing the player between game servers
             logger.info("Setting destination of player '$player' to game '$gameId'")
             setDestination(player, gameId)
-            k8sServiceDiscovery.getChannelToProxyOf(player) // Send to the proxy if we're routing the player between game servers
+            playerTracker.getPlayer(player)?.proxyPodName?.let {
+                k8sServiceDiscovery.getChannelToProxy(it)
+            }
         } else {
             playerTracker.getChannelToPlayer(player) // Send directly to the game server if we're routing the player between instances on the same server
         } ?: run {

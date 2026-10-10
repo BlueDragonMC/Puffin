@@ -239,6 +239,10 @@ class PlayerTracker @Inject constructor(
         }
 
     init {
+        k8sServiceDiscovery.registerProxyPlayerListener { podName, response ->
+            updateProxyPlayers(podName, response)
+        }
+
         applicationScope.repeatingTask(
             name = "PlayerTracker cleanup",
             initialDelayMillis = 10_000L,

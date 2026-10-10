@@ -2,6 +2,7 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
 import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
+import com.bluedragonmc.api.grpc.PlayerHolderOuterClass
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
@@ -24,18 +25,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
-import java.util.*
 
 interface IK8sServiceDiscovery {
     /**
      * Gets the pod IP address of the specified pod
      */
     suspend fun getProxyIP(podName: String): String?
-
-    /**
-     * Gets the pod IP address of the proxy that the player is on (null if unknown)
-     */
-    suspend fun getProxyIP(player: UUID): String?
 
     /**
      * Gets the pod IP address of a game server by its name
@@ -46,10 +41,17 @@ interface IK8sServiceDiscovery {
     fun getAllProxies(): List<String>
     suspend fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
     suspend fun getChannelToServer(serverName: String): ManagedChannel?
-    suspend fun getChannelToProxyOf(player: UUID): ManagedChannel?
     suspend fun getChannelToProxy(proxyPodName: String): ManagedChannel?
 
     suspend fun periodicSync()
+
+    /**
+     * Registers a listener that is notified with each proxy's full player list
+     * every time [periodicSync] runs.
+     */
+    fun registerProxyPlayerListener(
+        listener: suspend (podName: String, response: PlayerHolderOuterClass.GetPlayersResponse) -> Unit
+    )
 }
 
 /**
@@ -57,7 +59,6 @@ interface IK8sServiceDiscovery {
  */
 @Singleton
 class K8sServiceDiscovery @Inject constructor(
-    val playerTracker: IPlayerTracker,
     val applicationScope: ApplicationScope
 ) : Service(), IK8sServiceDiscovery {
 
@@ -89,6 +90,15 @@ class K8sServiceDiscovery @Inject constructor(
     @Volatile
     private var proxyPodNames = listOf<String>()
 
+    private val proxyPlayerListeners =
+        mutableListOf<suspend (podName: String, response: PlayerHolderOuterClass.GetPlayersResponse) -> Unit>()
+
+    override fun registerProxyPlayerListener(
+        listener: suspend (podName: String, response: PlayerHolderOuterClass.GetPlayersResponse) -> Unit
+    ) {
+        proxyPlayerListeners.add(listener)
+    }
+
     override suspend fun periodicSync() {
         val podList = withContext(Dispatchers.IO) { getProxies() }
         val proxies = podList.items.mapNotNull { it.metadata?.name }
@@ -103,9 +113,7 @@ class K8sServiceDiscovery @Inject constructor(
                 }
                 val stub = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
                 val response = stub.getPlayers(Empty.getDefaultInstance())
-
-                // Set the proxy name of every connected player
-                playerTracker.updateProxyPlayers(podName, response)
+                proxyPlayerListeners.forEach { it(podName, response) }
             }
         }
     }
@@ -131,22 +139,6 @@ class K8sServiceDiscovery @Inject constructor(
         return withContext(Dispatchers.IO) {
             serverAddresses.get(podName) {
                 val pod = api.readNamespacedPod(podName, K8S_NAMESPACE).execute()
-                pod.status?.podIP
-            }
-        }
-    }
-
-    /**
-     * Gets the pod IP address of the proxy that the player is on (null if unknown)
-     */
-    override suspend fun getProxyIP(player: UUID): String? {
-        if (DEV_MODE) {
-            return DEFAULT_PROXY_IP
-        }
-        val proxy = playerTracker.getPlayer(player)?.proxyPodName ?: return null
-        return withContext(Dispatchers.IO) {
-            serverAddresses.get(proxy) {
-                val pod = api.readNamespacedPod(proxy, K8S_NAMESPACE).execute()
                 pod.status?.podIP
             }
         }
@@ -187,11 +179,6 @@ class K8sServiceDiscovery @Inject constructor(
         }
         return Utils.channelTo(addr, Env.GS_GRPC_PORT)
     }
-
-    override suspend fun getChannelToProxyOf(player: UUID): ManagedChannel? =
-        getProxyIP(player)?.let { address ->
-            return Utils.channelTo(address, PROXY_GRPC_PORT)
-        }
 
     override suspend fun getChannelToProxy(proxyPodName: String): ManagedChannel? {
         logger.debug("Getting gRPC channel to proxy with name: '$proxyPodName'")
