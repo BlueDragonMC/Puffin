@@ -3,7 +3,9 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.CommonTypes
 import com.bluedragonmc.api.grpc.CommonTypes.EnumGameState
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
+import kotlinx.coroutines.Job
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Connection info for a game server.
@@ -67,4 +69,27 @@ data class QueuedParty(
     val players: List<UUID>, val gameType: CommonTypes.GameType
 ) {
     var attempts = 0
+}
+
+/**
+ * A party's mutable state.
+ */
+class Party(
+    internal val members: MutableList<UUID>,
+    internal val invitations: MutableMap<UUID, Job>,
+    internal var leader: UUID,
+    internal var marathon: Marathon? = null,
+    val id: String = UUID.randomUUID().toString(),
+)
+
+/**
+ * A marathon's mutable state.
+ */
+class Marathon(
+    val endsAt: Long,
+    internal val points: ConcurrentHashMap<UUID, Int>,
+) {
+    internal var cancelJob: Job? = null
+
+    fun getPoints() = points.toMap()
 }

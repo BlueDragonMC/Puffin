@@ -7,6 +7,7 @@ import com.bluedragonmc.api.grpc.partyListResponse
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.services.IPlayerTracker
 import com.bluedragonmc.puffin.services.IQueueService
+import com.bluedragonmc.puffin.services.Party
 import com.bluedragonmc.puffin.services.PartyManager
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
@@ -16,7 +17,6 @@ import com.google.protobuf.Empty
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * gRPC adapter for parties.
@@ -29,9 +29,9 @@ class PartyGrpcService @Inject constructor(
     private val applicationScope: ApplicationScope,
 ) : PartyServiceGrpcKt.PartyServiceCoroutineImplBase() {
 
-    private suspend fun sendInvitationMessage(party: PartyManager.Party, invitee: UUID, inviter: UUID) {
+    private suspend fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
         playerTracker.sendChatAsync(
-            party.getMembers(),
+            partyManager.getMembers(party),
             Utils.surroundWithSeparators("<p2><lang:puffin.party.invite.other:'${partyManager.getUsername(inviter)}':'${partyManager.getUsername(invitee)}'>")
         )
         playerTracker.sendChatAsync(
@@ -48,12 +48,12 @@ class PartyGrpcService @Inject constructor(
             playerTracker.sendChat(player, "<red><lang:puffin.party.not_found>")
             return Empty.getDefaultInstance()
         }
-        if (party.invitations.contains(player)) {
+        if (partyManager.hasInvitation(party, player)) {
             playerTracker.sendChat(
-                party.getMembers(),
+                partyManager.getMembers(party),
                 Utils.surroundWithSeparators("<p2><lang:puffin.party.join.other:'${partyManager.getUsername(player)}'>")
             )
-            party.add(player)
+            partyManager.addMember(party, player)
             playerTracker.sendChat(
                 player,
                 Utils.surroundWithSeparators("<p2><lang:puffin.party.join.self:'${partyManager.getUsername(partyOwner)}'>")
@@ -73,7 +73,7 @@ class PartyGrpcService @Inject constructor(
         }
         val party = partyManager.partyOf(partyOwner) ?: partyManager.createParty(partyOwner)
 
-        if (party.getMembers().contains(player)) {
+        if (partyManager.getMembers(party).contains(player)) {
             playerTracker.sendChat(partyOwner, "<red><lang:puffin.party.invite.already_in_party>")
             return Empty.getDefaultInstance()
         }
@@ -81,14 +81,14 @@ class PartyGrpcService @Inject constructor(
         sendInvitationMessage(party, player, partyOwner)
         val expiryJob = applicationScope.launch {
             delay(60_000)
-            if (party.invitations.contains(player)) {
-                party.removeInvitation(player)
+            if (partyManager.hasInvitation(party, player)) {
+                partyManager.removeInvitation(party, player)
                 playerTracker.sendChatAsync(player, message = {
                     "<p2><lang:puffin.party.invite.expired:'${partyManager.getUsername(partyOwner)}'>"
                 })
             }
         }
-        party.addInvitation(player, expiryJob)
+        partyManager.addInvitation(party, player, expiryJob)
         return Empty.getDefaultInstance()
     }
 
@@ -97,7 +97,7 @@ class PartyGrpcService @Inject constructor(
         val party = partyManager.partyOf(uuid)
         if (party != null) {
             playerTracker.sendChatAsync(
-                party.getMembers(),
+                partyManager.getMembers(party),
                 "<p3><lang:puffin.party.chat.prefix> <white>${partyManager.getUsername(uuid)}<gray>: <white>${request.message}"
             )
         } else {
@@ -111,11 +111,11 @@ class PartyGrpcService @Inject constructor(
         val party = partyManager.partyOf(uuid)
         if (party != null) {
             return partyListResponse {
-                players += party.getMembers().map {
+                players += partyManager.getMembers(party).map {
                     playerEntry {
                         this.uuid = it.toString()
                         username = partyManager.getUsername(it)
-                        role = if (party.leader == it) "Leader" else "Member"
+                        role = if (partyManager.getLeader(party) == it) "Leader" else "Member"
                     }
                 }
             }
@@ -133,10 +133,10 @@ class PartyGrpcService @Inject constructor(
         } else {
             val party = partyManager.partyOf(partyOwner)
             if (party != null) {
-                if (party.getMembers().contains(player)) {
-                    party.remove(player)
+                if (partyManager.getMembers(party).contains(player)) {
+                    partyManager.removeMember(party, player)
                     playerTracker.sendChat(
-                        party.getMembers(),
+                        partyManager.getMembers(party),
                         Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.success:'${partyManager.getUsername(player)}'>")
                     )
                     playerTracker.sendChat(
@@ -158,10 +158,10 @@ class PartyGrpcService @Inject constructor(
         val party = partyManager.partyOf(player)
 
         if (party != null) {
-            party.remove(player)
+            partyManager.removeMember(party, player)
             playerTracker.sendChat(player, Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.self>"))
             playerTracker.sendChat(
-                party.getMembers(),
+                partyManager.getMembers(party),
                 Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.others:'${partyManager.getUsername(player)}'>")
             )
         } else {
@@ -181,17 +181,17 @@ class PartyGrpcService @Inject constructor(
             playerTracker.sendChat(oldUuid, "<red><lang:puffin.party.chat.not_found>")
             return Empty.getDefaultInstance()
         }
-        if (party.leader != oldUuid) {
+        if (partyManager.getLeader(party) != oldUuid) {
             playerTracker.sendChat(oldUuid, "<red><lang:puffin.party.transfer.not_leader>")
             return Empty.getDefaultInstance()
         }
-        if (!party.getMembers().contains(newUuid) || playerTracker.getPlayer(newUuid) == null) {
+        if (!partyManager.getMembers(party).contains(newUuid) || playerTracker.getPlayer(newUuid) == null) {
             playerTracker.sendChat(oldUuid, "<red><lang:puffin.party.member_not_found>")
             return Empty.getDefaultInstance()
         }
-        party.leader = newUuid
+        partyManager.setLeader(party, newUuid)
         playerTracker.sendChat(
-            party.getMembers(),
+            partyManager.getMembers(party),
             Utils.surroundWithSeparators("<p2><lang:puffin.party.transfer.success:'${partyManager.getUsername(newUuid)}'>")
         )
 
@@ -206,7 +206,7 @@ class PartyGrpcService @Inject constructor(
             playerTracker.sendChat(uuid, "<red><lang:puffin.party.not_found>")
             return Empty.getDefaultInstance()
         }
-        if (party.leader != uuid) {
+        if (partyManager.getLeader(party) != uuid) {
             playerTracker.sendChat(uuid, "<red><lang:puffin.party.warp.not_leader>")
             return Empty.getDefaultInstance()
         }
@@ -216,7 +216,7 @@ class PartyGrpcService @Inject constructor(
         val playersInInstance = playerTracker.getPlayersInInstance(gameId)
 
         val emptySlots = queueService.getGame(gameId)?.emptySlots ?: 0
-        val warpNeeded = party.getMembers().count { member -> !playersInInstance.contains(member) }
+        val warpNeeded = partyManager.getMembers(party).count { member -> !playersInInstance.contains(member) }
 
         if (warpNeeded > emptySlots) {
             playerTracker.sendChat(uuid, "<red><lang:puffin.party.warp.not_enough_space>")
@@ -225,17 +225,17 @@ class PartyGrpcService @Inject constructor(
 
         // Warp every member
         val leaderGameId =
-            playerTracker.getPlayer(party.leader)?.gameId ?: return@handleRPC Empty.getDefaultInstance()
+            playerTracker.getPlayer(partyManager.getLeader(party))?.gameId ?: return@handleRPC Empty.getDefaultInstance()
         val membersToWarp =
-            party.getMembers().count { member -> playerTracker.getPlayer(member)?.gameId != leaderGameId }
-        party.getMembers().forEach {
-            if (party.leader != it) {
+            partyManager.getMembers(party).count { member -> playerTracker.getPlayer(member)?.gameId != leaderGameId }
+        partyManager.getMembers(party).forEach {
+            if (partyManager.getLeader(party) != it) {
                 queueService.sendPlayerToInstance(it, gameId)
             }
         }
         playerTracker.sendChat(
-            party.getMembers(),
-            "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${partyManager.getUsername(party.leader)}'>"
+            partyManager.getMembers(party),
+            "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${partyManager.getUsername(partyManager.getLeader(party))}'>"
         )
 
         return Empty.getDefaultInstance()
@@ -251,14 +251,14 @@ class PartyGrpcService @Inject constructor(
                 }
                 continue
             }
-            val marathon = party.marathon
+            val marathon = partyManager.getMarathon(party)
             if (marathon == null) {
                 if (!request.silent) {
                     playerTracker.sendChat(uuid, "<red><lang:puffin.party.marathon.not_found>")
                 }
                 continue
             }
-            val lb = marathon.formatLeaderboard()
+            val lb = partyManager.formatMarathonLeaderboard(marathon)
             val duration = (marathon.endsAt - System.currentTimeMillis()) / 1000
             val hours = duration / 3600
             val minutes = (duration / 60) % 60
@@ -281,22 +281,21 @@ class PartyGrpcService @Inject constructor(
             return Empty.getDefaultInstance()
         }
 
-        if (party.marathon != null) {
+        if (partyManager.getMarathon(party) != null) {
             playerTracker.sendChat(uuid, "<red><lang:puffin.party.marathon_already_started>")
             return Empty.getDefaultInstance()
         }
 
-        if (uuid != party.leader) {
+        if (uuid != partyManager.getLeader(party)) {
             playerTracker.sendChat(uuid, "<red><lang:puffin.party.marathon.not_leader>")
             return Empty.getDefaultInstance()
         }
 
-        party.marathon =
-            PartyManager.Marathon(partyManager, party, System.currentTimeMillis() + request.durationMs, ConcurrentHashMap())
+        partyManager.startMarathon(party, request.durationMs.toLong())
 
         val minutes = request.durationMs / 1000 / 60
         playerTracker.sendChat(
-            party.getMembers(),
+            partyManager.getMembers(party),
             Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.started:'${partyManager.getUsername(uuid)}':'<p1><lang:puffin.party.marathon.started.time_period:$minutes>'>")
         )
 
@@ -313,23 +312,22 @@ class PartyGrpcService @Inject constructor(
             return Empty.getDefaultInstance()
         }
 
-        if (party.marathon == null) {
+        if (partyManager.getMarathon(party) == null) {
             playerTracker.sendChat(uuid, "<red><lang:puffin.party.marathon.not_found>")
             return Empty.getDefaultInstance()
         }
 
-        if (uuid != party.leader) {
+        if (uuid != partyManager.getLeader(party)) {
             playerTracker.sendChat(uuid, "<red><lang:puffin.party.marathon.not_leader>")
             return Empty.getDefaultInstance()
         }
 
         playerTracker.sendChat(
-            party.getMembers(),
-            Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.ended_by_player:'${partyManager.getUsername(uuid)}'>\n${party.marathon!!.formatLeaderboard()}")
+            partyManager.getMembers(party),
+            Utils.surroundWithSeparators("<yellow><lang:puffin.party.marathon.ended_by_player:'${partyManager.getUsername(uuid)}'>\n${partyManager.formatMarathonLeaderboard(partyManager.getMarathon(party)!!)}")
         )
 
-        party.marathon!!.end()
-        party.marathon = null
+        partyManager.endMarathon(party)
 
         return Empty.getDefaultInstance()
     }
@@ -338,17 +336,17 @@ class PartyGrpcService @Inject constructor(
         val uuid = UUID.fromString(request.playerUuid)
         val party = partyManager.partyOf(uuid)
 
-        if (party?.marathon == null) {
+        if (party == null || partyManager.getMarathon(party) == null) {
             return Empty.getDefaultInstance()
         }
 
-        val leaderGameId = playerTracker.getPlayer(party.leader)?.gameId
+        val leaderGameId = playerTracker.getPlayer(partyManager.getLeader(party))?.gameId
         if (request.gameId != leaderGameId) {
             playerTracker.sendChat(uuid, "<gray><lang:puffin.party.marathon.outside_points>")
             return Empty.getDefaultInstance()
         }
 
-        party.marathon?.addPoints(uuid, request.coins)
+        partyManager.addMarathonPoints(party, uuid, request.coins)
 
         return Empty.getDefaultInstance()
     }

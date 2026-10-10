@@ -254,20 +254,21 @@ class ApiService @Inject constructor(
         }
     }
 
-    private fun createJsonObjectForParty(party: PartyManager.Party): JsonObject {
+    private fun createJsonObjectForParty(party: Party): JsonObject {
         return JsonObject().apply {
             addProperty("id", party.id)
             add("members", JsonArray().apply {
-                party.getMembers().forEach { member -> add(member.toString()) }
+                partyManager.getMembers(party).forEach { member -> add(member.toString()) }
             })
-            addProperty("leader", party.leader.toString())
-            add("invitations", JsonArray().apply { party.invitations.forEach { add(it.toString()) } })
-            if (party.marathon != null) {
+            addProperty("leader", partyManager.getLeader(party).toString())
+            add("invitations", JsonArray().apply { partyManager.getInvitations(party).forEach { add(it.toString()) } })
+            val marathon = partyManager.getMarathon(party)
+            if (marathon != null) {
                 add("marathon", JsonObject().apply {
                     add("points", JsonObject().apply {
-                        party.marathon?.getPoints()?.forEach { (k, v) -> addProperty(k.toString(), v) }
+                        marathon.getPoints().forEach { (k, v) -> addProperty(k.toString(), v) }
                     })
-                    addProperty("endsAt", party.marathon?.endsAt)
+                    addProperty("endsAt", marathon.endsAt)
                 })
             }
         }

@@ -29,16 +29,16 @@ class QueueGrpcService @Inject constructor(
         val playerUuid = UUID.fromString(request.playerUuid)
         val party = partyManager.partyOf(playerUuid)
         val isLobby = request.gameType.name == Env.LOBBY_GAME_NAME
-        if (party != null && party.leader != playerUuid && !isLobby) {
+        if (party != null && partyManager.getLeader(party) != playerUuid && !isLobby) {
             playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
             return@handleRPC Empty.getDefaultInstance()
         }
 
-        val queuedPlayers = if (party != null && party.leader != playerUuid) {
+        val queuedPlayers = if (party != null && partyManager.getLeader(party) != playerUuid) {
             // Non-leader party members may only queue themselves (e.g. to go to the lobby)
             listOf(playerUuid)
         } else {
-            party?.getMembers() ?: listOf(playerUuid)
+            party?.let { partyManager.getMembers(it) } ?: listOf(playerUuid)
         }
         queueService.addToQueue(QueuedParty(queuedPlayers, request.gameType))
 
@@ -49,7 +49,7 @@ class QueueGrpcService @Inject constructor(
         for (request in request.requestsList) {
             val uuid = UUID.fromString(request.playerUuid)
             val party = partyManager.partyOf(uuid)
-            if (party == null || party.leader == uuid || request.gameType.name == Env.LOBBY_GAME_NAME) {
+            if (party == null || partyManager.getLeader(party) == uuid || request.gameType.name == Env.LOBBY_GAME_NAME) {
                 addToQueue(request)
             }
         }
@@ -71,7 +71,7 @@ class QueueGrpcService @Inject constructor(
     override suspend fun removeFromQueue(request: Queue.RemoveFromQueueRequest): Empty = handleRPC {
         val playerUuid = UUID.fromString(request.playerUuid)
         val party = partyManager.partyOf(playerUuid)
-        if (party != null && party.leader != playerUuid) {
+        if (party != null && partyManager.getLeader(party) != playerUuid) {
             playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
             return@handleRPC Empty.getDefaultInstance()
         }
