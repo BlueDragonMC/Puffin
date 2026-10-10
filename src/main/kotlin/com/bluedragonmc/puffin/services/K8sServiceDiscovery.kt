@@ -6,12 +6,10 @@ import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
 import com.bluedragonmc.puffin.app.Env.DEFAULT_PROXY_IP
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
-import com.bluedragonmc.puffin.app.Env.GS_GRPC_PORT
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.bluedragonmc.puffin.app.Env.PROXY_GRPC_PORT
 import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
-import com.bluedragonmc.puffin.util.Utils.channelTo
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -84,14 +82,14 @@ class K8sServiceDiscovery @Inject constructor(val playerTracker: IPlayerTracker)
         }
     }
 
+    @Volatile
     private var proxyPodNames = listOf<String>()
 
-    @Synchronized
     override fun periodicSync() {
-        val playerTracker = playerTracker
-        proxyPodNames = getProxies().items.mapNotNull { it.metadata?.name }
+        val proxies = getProxies().items.mapNotNull { it.metadata?.name }
+        proxyPodNames = proxies
 
-        proxyPodNames.forEach { podName ->
+        proxies.forEach { podName ->
             Puffin.IO.launch {
                 val channel = getChannelToProxy(podName)
                 if (channel == null) {
