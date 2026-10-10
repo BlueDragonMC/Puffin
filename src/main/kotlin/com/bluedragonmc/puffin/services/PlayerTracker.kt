@@ -50,7 +50,6 @@ class PlayerTracker @Inject constructor(
     val databaseConnection: DatabaseConnection,
     val queueService: IQueueService,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val partyManager: IPartyManager,
     val applicationScope: ApplicationScope
 ) : Service(), IPlayerTracker {
 
@@ -278,7 +277,6 @@ class PlayerTracker @Inject constructor(
             logger.info("Logout > ${request.username} $oldState")
             logoutCallbacks.forEach { it(uuid) }
             databaseConnection.evictCachesForPlayer(uuid)
-            partyManager.onLogout(uuid)
             queueService.removeFromQueue(uuid)
 
             if (oldState?.gameId == null)

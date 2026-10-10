@@ -23,7 +23,6 @@ interface IPartyManager {
     fun getParties(): Set<PartyManager.Party>
     fun partyOf(player: UUID): PartyManager.Party?
     fun registerPartyUpdateCallback(cb: (action: String, id: String, updated: JsonElement?) -> Unit)
-    fun onLogout(player: UUID)
     val partyService: PartyManager.PartyService
 }
 
@@ -42,6 +41,11 @@ class PartyManager @Inject constructor(
 
     /** Used for mutual exclusion when mutating [parties] and each party's members and invitations. */
     private val partyLock = Any()
+
+    init {
+        // React to logouts through PlayerTracker's callback rather than depending on it directly.
+        playerTracker.registerLogoutCallback { onLogout(it) }
+    }
 
     override fun getParties() = synchronized(partyLock) { parties.toSet() }
     override fun partyOf(player: UUID) = synchronized(partyLock) { parties.find { player in it.getMembers() } }
@@ -269,7 +273,7 @@ class PartyManager @Inject constructor(
         }
     }
 
-    override fun onLogout(player: UUID) {
+    private fun onLogout(player: UUID) {
         synchronized(partyLock) {
             val party = partyOf(player) ?: return
             playerTracker.sendChatAsync(party.getMembers(), message = {
