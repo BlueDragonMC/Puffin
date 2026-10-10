@@ -117,7 +117,7 @@ class QueueService @Inject constructor(
 
     private val data = Data()
 
-    init {
+    override fun start() {
         playerTracker.registerGameIdChangeCallback { removeFromQueue(it) }
         playerTracker.registerLogoutCallback { applicationScope.launch { removeFromQueue(it) } }
 

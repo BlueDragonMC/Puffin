@@ -7,5 +7,7 @@ abstract class Service {
 
     protected val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
+    open fun start() { }
+
     open fun close() { }
 }

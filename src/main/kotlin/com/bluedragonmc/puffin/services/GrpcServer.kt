@@ -31,7 +31,7 @@ class GrpcServer @Inject constructor(
 
     private lateinit var server: Server
 
-    fun start() {
+    override fun start() {
         server = ServerBuilder.forPort(GRPC_SERVER_PORT)
             .addService(mapGrpcService)
             .addService(lobbyGrpcService)

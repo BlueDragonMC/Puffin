@@ -242,7 +242,7 @@ class PlayerTracker @Inject constructor(
             sendChat(players, message(), chatType)
         }
 
-    init {
+    override fun start() {
         k8sServiceDiscovery.registerProxyPlayerListener { podName, response ->
             updateProxyPlayers(podName, response)
         }

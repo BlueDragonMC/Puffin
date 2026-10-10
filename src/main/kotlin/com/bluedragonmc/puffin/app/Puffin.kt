@@ -15,7 +15,6 @@ import com.bluedragonmc.puffin.grpc.VelocityMessageGrpcService
 import com.bluedragonmc.puffin.services.*
 import com.google.inject.Guice
 import com.google.inject.Module
-import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 
 class Puffin {
@@ -57,9 +56,18 @@ class Puffin {
         val applicationScope = injector.getInstance(ApplicationScope::class.java)
         Runtime.getRuntime().addShutdownHook(Thread({ applicationScope.close() }, "Puffin shutdown"))
 
+        // Register callbacks/listeners
+        injector.getInstance(PlayerTracker::class.java).start()
+        injector.getInstance(PartyManager::class.java).start()
+        injector.getInstance(QueueService::class.java).start()
+        injector.getInstance(ApiService::class.java).start()
+
+        // Start background sync and servers.
+        injector.getInstance(K8sServiceDiscovery::class.java).start()
+        injector.getInstance(GameServerManager::class.java).start()
+        injector.getInstance(MapService::class.java).start()
+
         injector.getInstance(GrpcServer::class.java).start()
-        injector.getInstance(ApiService::class.java).registerCallbacks()
-        applicationScope.launch { injector.getInstance(K8sServiceDiscovery::class.java).periodicSync() }
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         injector.getInstance(GrpcServer::class.java).awaitTermination()

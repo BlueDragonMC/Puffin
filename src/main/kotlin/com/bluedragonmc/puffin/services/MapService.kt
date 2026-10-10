@@ -87,7 +87,7 @@ class MapService @Inject constructor(val db: DatabaseConnection, val application
         return filteredAnvilFileMaps + filteredDbMaps
     }
 
-    init {
+    override fun start() {
         val server = HttpServer.create(InetSocketAddress("0.0.0.0", Env.MAP_SERVICE_PORT), 0)
         server.createContext("/map/") { exchange ->
             applicationScope.launch {

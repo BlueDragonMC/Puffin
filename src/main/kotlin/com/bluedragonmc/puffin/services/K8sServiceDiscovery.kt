@@ -62,28 +62,30 @@ class K8sServiceDiscovery @Inject constructor(
     val applicationScope: ApplicationScope
 ) : Service(), IK8sServiceDiscovery {
 
-    private val api: CoreV1Api
+    private lateinit var api: CoreV1Api
 
     private val serverAddresses = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofMinutes(60))
         .expireAfterAccess(Duration.ofMinutes(60))
         .build<String, String?>()
 
-    init {
+    override fun start() {
         val client = Config.defaultClient()
         Configuration.setDefaultApiClient(client)
 
         api = CoreV1Api()
 
         // Kubernetes isn't expected in development mode
-        if (!DEV_MODE) {
-            applicationScope.repeatingTask(
-                name = "K8sServiceDiscovery Periodic Sync",
-                initialDelayMillis = Env.K8S_SYNC_PERIOD,
-                periodMillis = Env.K8S_SYNC_PERIOD
-            ) {
-                periodicSync()
-            }
+        if (DEV_MODE) return
+
+        // Perform an initial sync immediately, then keep it up to date periodically.
+        applicationScope.launch { periodicSync() }
+        applicationScope.repeatingTask(
+            name = "K8sServiceDiscovery Periodic Sync",
+            initialDelayMillis = Env.K8S_SYNC_PERIOD,
+            periodMillis = Env.K8S_SYNC_PERIOD
+        ) {
+            periodicSync()
         }
     }
 

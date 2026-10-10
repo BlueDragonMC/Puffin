@@ -21,7 +21,6 @@ import java.net.InetSocketAddress
 import java.util.*
 
 interface IApiService {
-    fun registerCallbacks()
     fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?)
     fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject)
     suspend fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject
@@ -121,11 +120,12 @@ class ApiService @Inject constructor(
     private val ws: WebSocketServer =
         SocketServer(InetSocketAddress(InetAddress.getByName("0.0.0.0"), Env.API_SERVICE_PORT))
 
-    init {
+    override fun start() {
+        registerCallbacks()
         ws.start()
     }
 
-    override fun registerCallbacks() {
+    private fun registerCallbacks() {
         playerTracker.registerInstanceChangeCallback { player, serverName, gameId ->
             applicationScope.launch {
                 val state = playerTracker.getPlayer(player) ?: return@launch

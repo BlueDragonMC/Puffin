@@ -34,7 +34,7 @@ class PartyManager @Inject constructor(
     /** Used for mutual exclusion when mutating [parties] and each party's members and invitations. */
     private val partyLock = Any()
 
-    init {
+    override fun start() {
         // React to logouts through PlayerTracker's callback rather than depending on it directly.
         playerTracker.registerLogoutCallback { onLogout(it) }
     }

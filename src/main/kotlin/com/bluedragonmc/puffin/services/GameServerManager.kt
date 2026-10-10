@@ -83,32 +83,31 @@ class GameServerManager @Inject constructor(
         gameServerListeners.forEach { it(event) }
     }
 
-    init {
-        if (!DEV_MODE) {
+    override fun start() {
+        if (DEV_MODE) return
 
-            applicationScope.launch {
-                while (true) {
-                    reloadGameServers()
-                    watch()
-                    logger.error("There was a problem watching Agones resources. Retrying...")
-                    delay(5_000)
-                }
-            }
-
-            applicationScope.repeatingTask(
-                name = "GameManager Periodic Sync",
-                initialDelayMillis = Env.GS_SYNC_PERIOD,
-                periodMillis = Env.GS_SYNC_PERIOD
-            ) {
-                for ((serverName, _) in queueService.getServers()) {
-                    applicationScope.launch {
-                        syncExistingServer(serverName)
-                    }
-                }
-
-                // Sync game servers periodically just in case a change isn't picked up by the watcher
+        applicationScope.launch {
+            while (true) {
                 reloadGameServers()
+                watch()
+                logger.error("There was a problem watching Agones resources. Retrying...")
+                delay(5_000)
             }
+        }
+
+        applicationScope.repeatingTask(
+            name = "GameManager Periodic Sync",
+            initialDelayMillis = Env.GS_SYNC_PERIOD,
+            periodMillis = Env.GS_SYNC_PERIOD
+        ) {
+            for ((serverName, _) in queueService.getServers()) {
+                applicationScope.launch {
+                    syncExistingServer(serverName)
+                }
+            }
+
+            // Sync game servers periodically just in case a change isn't picked up by the watcher
+            reloadGameServers()
         }
     }
 
