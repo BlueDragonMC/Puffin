@@ -1,20 +1,13 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.puffin.app.Env.GRPC_SERVER_PORT
-import com.bluedragonmc.puffin.grpc.GameStateGrpcService
-import com.bluedragonmc.puffin.grpc.InstanceGrpcService
-import com.bluedragonmc.puffin.grpc.JukeboxGrpcService
-import com.bluedragonmc.puffin.grpc.LobbyGrpcService
-import com.bluedragonmc.puffin.grpc.MapGrpcService
-import com.bluedragonmc.puffin.grpc.PartyGrpcService
-import com.bluedragonmc.puffin.grpc.PlayerTrackerGrpcService
-import com.bluedragonmc.puffin.grpc.QueueGrpcService
-import com.bluedragonmc.puffin.grpc.VelocityMessageGrpcService
+import com.bluedragonmc.puffin.grpc.*
 import com.google.inject.Inject
 import com.google.inject.Singleton
 import io.grpc.Server
 import io.grpc.ServerBuilder
 import io.grpc.protobuf.services.ProtoReflectionServiceV1
+import java.util.concurrent.TimeUnit
 
 @Singleton
 class GrpcServer @Inject constructor(
@@ -51,5 +44,19 @@ class GrpcServer @Inject constructor(
 
     fun awaitTermination() {
         server.awaitTermination()
+    }
+
+    override fun close() {
+        if (::server.isInitialized) {
+            server.shutdown()
+            try {
+                if (!server.awaitTermination(5, TimeUnit.SECONDS)) {
+                    server.shutdownNow()
+                }
+            } catch (_: InterruptedException) {
+                server.shutdownNow()
+                Thread.currentThread().interrupt()
+            }
+        }
     }
 }

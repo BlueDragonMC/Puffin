@@ -13,6 +13,7 @@ import com.bluedragonmc.puffin.grpc.PlayerTrackerGrpcService
 import com.bluedragonmc.puffin.grpc.QueueGrpcService
 import com.bluedragonmc.puffin.grpc.VelocityMessageGrpcService
 import com.bluedragonmc.puffin.services.*
+import com.bluedragonmc.puffin.util.Utils
 import com.google.inject.Guice
 import com.google.inject.Module
 import org.slf4j.LoggerFactory
@@ -54,22 +55,46 @@ class Puffin {
 
         val injector = Guice.createInjector(module)
         val applicationScope = injector.getInstance(ApplicationScope::class.java)
-        Runtime.getRuntime().addShutdownHook(Thread({ applicationScope.close() }, "Puffin shutdown"))
+        val databaseConnection = injector.getInstance(DatabaseConnection::class.java)
+        val playerTracker = injector.getInstance(PlayerTracker::class.java)
+        val partyManager = injector.getInstance(PartyManager::class.java)
+        val queueService = injector.getInstance(QueueService::class.java)
+        val apiService = injector.getInstance(ApiService::class.java)
+        val k8sServiceDiscovery = injector.getInstance(K8sServiceDiscovery::class.java)
+        val gameServerManager = injector.getInstance(GameServerManager::class.java)
+        val mapService = injector.getInstance(MapService::class.java)
+        val grpcServer = injector.getInstance(GrpcServer::class.java)
 
         // Register callbacks/listeners
-        injector.getInstance(PlayerTracker::class.java).start()
-        injector.getInstance(PartyManager::class.java).start()
-        injector.getInstance(QueueService::class.java).start()
-        injector.getInstance(ApiService::class.java).start()
+        playerTracker.start()
+        partyManager.start()
+        queueService.start()
+        apiService.start()
 
-        // Start background sync and servers.
-        injector.getInstance(K8sServiceDiscovery::class.java).start()
-        injector.getInstance(GameServerManager::class.java).start()
-        injector.getInstance(MapService::class.java).start()
+        // Start background sync and servers
+        k8sServiceDiscovery.start()
+        gameServerManager.start()
+        mapService.start()
 
-        injector.getInstance(GrpcServer::class.java).start()
+        grpcServer.start()
+
+        Runtime.getRuntime().addShutdownHook(Thread({
+            logger.info("Shutting down Puffin...")
+            // Cancel background tasks and tear down services
+            grpcServer.close()
+            mapService.close()
+            apiService.close()
+            applicationScope.close()
+            gameServerManager.close()
+            k8sServiceDiscovery.close()
+            queueService.close()
+            partyManager.close()
+            playerTracker.close()
+            databaseConnection.close()
+            Utils.closeAllChannels()
+        }, "Puffin shutdown"))
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
-        injector.getInstance(GrpcServer::class.java).awaitTermination()
+        grpcServer.awaitTermination()
     }
 }

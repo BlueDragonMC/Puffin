@@ -87,16 +87,24 @@ class MapService @Inject constructor(val db: DatabaseConnection, val application
         return filteredAnvilFileMaps + filteredDbMaps
     }
 
+    private lateinit var httpServer: HttpServer
+
     override fun start() {
-        val server = HttpServer.create(InetSocketAddress("0.0.0.0", Env.MAP_SERVICE_PORT), 0)
-        server.createContext("/map/") { exchange ->
+        httpServer = HttpServer.create(InetSocketAddress("0.0.0.0", Env.MAP_SERVICE_PORT), 0)
+        httpServer.createContext("/map/") { exchange ->
             applicationScope.launch {
                 exchange.use { exchange ->
                     handleRequest(exchange)
                 }
             }
         }
-        server.start()
+        httpServer.start()
+    }
+
+    override fun close() {
+        if (::httpServer.isInitialized) {
+            httpServer.stop(0)
+        }
     }
 
     private suspend fun handleRequest(exchange: HttpExchange) {

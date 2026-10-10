@@ -125,6 +125,14 @@ class ApiService @Inject constructor(
         ws.start()
     }
 
+    override fun close() {
+        try {
+            ws.stop()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
     private fun registerCallbacks() {
         playerTracker.registerInstanceChangeCallback { player, serverName, gameId ->
             applicationScope.launch {

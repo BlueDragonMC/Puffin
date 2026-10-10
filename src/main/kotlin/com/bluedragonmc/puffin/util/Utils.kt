@@ -39,6 +39,17 @@ object Utils {
         channels.invalidate(addr)
     }
 
+    /** Shuts down and clears every cached channel. Called during shutdown. */
+    fun closeAllChannels() {
+        channels.asMap().values.forEach { channel ->
+            if (!channel.isShutdown) {
+                channel.shutdown()
+            }
+        }
+        channels.invalidateAll()
+        channels.cleanUp()
+    }
+
     inline fun <R : Any> handleRPC(handler: () -> R): R {
         try {
             return handler()
