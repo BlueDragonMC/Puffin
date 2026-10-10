@@ -74,11 +74,10 @@ class K8sServiceDiscovery @Inject constructor(
 
         // Kubernetes isn't expected in development mode
         if (!DEV_MODE) {
-            Utils.catchingTimer(
-                "K8sServiceDiscovery Periodic Sync",
-                daemon = true,
-                initialDelay = Env.K8S_SYNC_PERIOD,
-                period = Env.K8S_SYNC_PERIOD
+            applicationScope.repeatingTask(
+                name = "K8sServiceDiscovery Periodic Sync",
+                initialDelayMillis = Env.K8S_SYNC_PERIOD,
+                periodMillis = Env.K8S_SYNC_PERIOD
             ) {
                 periodicSync()
             }

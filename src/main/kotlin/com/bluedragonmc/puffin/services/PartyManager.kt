@@ -7,7 +7,6 @@ import com.bluedragonmc.api.grpc.partyListResponse
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils
-import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.gson.JsonElement
 import com.google.inject.Inject
@@ -144,12 +143,12 @@ class PartyManager @Inject constructor(
          * The party's current members, including the leader
          */
         private val members: MutableList<UUID>,
-        private val _invitations: MutableMap<UUID, Timer>,
+        private val _invitations: MutableMap<UUID, Job>,
         val id: String = UUID.randomUUID().toString(),
         private var _leader: UUID,
         private var _marathon: Marathon? = null,
     ) {
-        val invitations: Map<UUID, Timer> get() = synchronized(svc.partyLock) { _invitations.toMap() }
+        val invitations: Map<UUID, Job> get() = synchronized(svc.partyLock) { _invitations.toMap() }
         var marathon: Marathon?
             get() = _marathon
             set(value) {
@@ -245,7 +244,8 @@ class PartyManager @Inject constructor(
             svc.parties.remove(this)
             svc.playerTracker.sendChatAsync(members, "<red><lang:puffin.party.disband.auto>")
             marathon?.end()
-            _invitations.keys.forEach { _invitations.remove(it)?.cancel() }
+            _invitations.values.forEach { it.cancel() }
+            _invitations.clear()
             svc.partyUpdateCallbacks.forEach { it("remove", id, null) }
         }
 
@@ -260,10 +260,10 @@ class PartyManager @Inject constructor(
             }
         }
 
-        fun addInvitation(player: UUID, timer: Timer) {
+        fun addInvitation(player: UUID, job: Job) {
             synchronized(svc.partyLock) {
                 _invitations[player]?.cancel()
-                _invitations[player] = timer
+                _invitations[player] = job
                 update()
             }
         }
@@ -321,8 +321,8 @@ class PartyManager @Inject constructor(
             }
 
             sendInvitationMessage(party, player, partyOwner)
-            val timer = catchingTimer(daemon = true, initialDelay = 60_000, period = 60_000) {
-                this.cancel()
+            val expiryJob = applicationScope.launch {
+                delay(60_000)
                 if (party.invitations.contains(player)) {
                     party.removeInvitation(player)
                     playerTracker.sendChatAsync(player, message = {
@@ -330,7 +330,7 @@ class PartyManager @Inject constructor(
                     })
                 }
             }
-            party.addInvitation(player, timer)
+            party.addInvitation(player, expiryJob)
             return Empty.getDefaultInstance()
         }
 

@@ -10,7 +10,6 @@ import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.*
-import kotlin.concurrent.fixedRateTimer
 
 object Utils {
     private val channels: Cache<String, ManagedChannel> = Caffeine.newBuilder()
@@ -38,24 +37,6 @@ object Utils {
         channel?.shutdown()
         channels.invalidate(addr)
     }
-
-    /**
-     * @param period The period, in milliseconds
-     */
-    inline fun catchingTimer(
-        name: String? = null,
-        daemon: Boolean = false,
-        initialDelay: Long = 0.toLong(),
-        period: Long,
-        crossinline action: TimerTask.() -> Unit,
-    ) =
-        fixedRateTimer(name, daemon, initialDelay, period) {
-            try {
-                action()
-            } catch (e: Throwable) {
-                e.printStackTrace()
-            }
-        }
 
     inline fun <R : Any> handleRPC(handler: () -> R): R {
         try {

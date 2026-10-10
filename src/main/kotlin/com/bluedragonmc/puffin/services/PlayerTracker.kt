@@ -3,7 +3,6 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.api.grpc.GsClient.SendChatRequest.ChatType
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -241,8 +240,12 @@ class PlayerTracker @Inject constructor(
         }
 
     init {
-        Utils.catchingTimer("PlayerTracker cleanup", true, 10_000.toLong(), 10_000.toLong()) {
-            applicationScope.launch { cleanup() }
+        applicationScope.repeatingTask(
+            name = "PlayerTracker cleanup",
+            initialDelayMillis = 10_000L,
+            periodMillis = 10_000L
+        ) {
+            cleanup()
         }
     }
 

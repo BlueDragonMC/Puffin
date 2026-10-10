@@ -7,7 +7,6 @@ import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.util.Utils
-import com.bluedragonmc.puffin.util.Utils.catchingTimer
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
@@ -71,22 +70,19 @@ class GameServerManager @Inject constructor(
                 }
             }
 
-            catchingTimer(
-                "GameManager Periodic Sync",
-                daemon = true,
-                initialDelay = Env.GS_SYNC_PERIOD,
-                period = Env.GS_SYNC_PERIOD
+            applicationScope.repeatingTask(
+                name = "GameManager Periodic Sync",
+                initialDelayMillis = Env.GS_SYNC_PERIOD,
+                periodMillis = Env.GS_SYNC_PERIOD
             ) {
-                applicationScope.launch {
-                    for ((serverName, _) in queueService.getServers()) {
-                        launch {
-                            syncExistingServer(serverName)
-                        }
+                for ((serverName, _) in queueService.getServers()) {
+                    applicationScope.launch {
+                        syncExistingServer(serverName)
                     }
-
-                    // Sync game servers periodically just in case a change isn't picked up by the watcher
-                    reloadGameServers()
                 }
+
+                // Sync game servers periodically just in case a change isn't picked up by the watcher
+                reloadGameServers()
             }
         }
     }
