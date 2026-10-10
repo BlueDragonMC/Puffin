@@ -20,14 +20,6 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.util.*
 
-interface IApiService {
-    fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?)
-    fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject)
-    suspend fun createJsonObjectForGameServer(gs: GameServer): JsonObject
-    suspend fun createJsonObjectForGame(gameId: String): JsonObject
-    suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerState): JsonObject
-}
-
 @Singleton
 class ApiService @Inject constructor(
     private val databaseConnection: DatabaseConnection,
@@ -36,7 +28,7 @@ class ApiService @Inject constructor(
     private val gameServerManager: IGameServerManager,
     private val queueService: IQueueService,
     private val applicationScope: ApplicationScope,
-) : Service(), IApiService {
+) : Service() {
 
     inner class SocketServer(addr: InetSocketAddress) : WebSocketServer(addr) {
 
@@ -159,8 +151,8 @@ class ApiService @Inject constructor(
             }
         }
 
-        partyManager.registerPartyUpdateCallback { action, id, updated ->
-            sendUpdate("party", action, id, updated)
+        partyManager.registerPartyUpdateCallback { action, id, party ->
+            sendUpdate("party", action, id, party?.let { createJsonObjectForParty(it) })
         }
 
         gameServerManager.registerGameServerListener { event ->
@@ -190,7 +182,7 @@ class ApiService @Inject constructor(
         }
     }
 
-    override fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?) {
+    private fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?) {
         val obj = JsonObject().apply {
             addProperty("type", "update")
             addProperty("action", action)
@@ -204,7 +196,7 @@ class ApiService @Inject constructor(
     private val gson = Gson()
     private val objectMapper = ObjectMapper()
 
-    override fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject) {
+    private fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject) {
         val patch = JsonDiff.asJsonPatch(
             objectMapper.readTree(gson.toJson(old)),
             objectMapper.readTree(gson.toJson(new))
@@ -214,7 +206,7 @@ class ApiService @Inject constructor(
         sendUpdate(resource, action, id, json)
     }
 
-    override suspend fun createJsonObjectForGameServer(gs: GameServer): JsonObject {
+    private suspend fun createJsonObjectForGameServer(gs: GameServer): JsonObject {
         return JsonObject().apply {
             if (gs is AgonesGameServer) {
                 add("raw", gs.`object`.raw)
@@ -230,7 +222,7 @@ class ApiService @Inject constructor(
         }
     }
 
-    override suspend fun createJsonObjectForGame(gameId: String): JsonObject {
+    private suspend fun createJsonObjectForGame(gameId: String): JsonObject {
         val game = queueService.getGame(gameId)
         return JsonObject().apply {
             addProperty("type", "instance")
@@ -252,7 +244,7 @@ class ApiService @Inject constructor(
         }
     }
 
-    override suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerState): JsonObject {
+    private suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerState): JsonObject {
         return JsonObject().apply {
             addProperty("uuid", uuid.toString())
             addProperty("username", databaseConnection.getPlayerName(uuid))
@@ -262,23 +254,21 @@ class ApiService @Inject constructor(
         }
     }
 
-    companion object {
-        fun createJsonObjectForParty(party: PartyManager.Party): JsonObject {
-            return JsonObject().apply {
-                addProperty("id", party.id)
-                add("members", JsonArray().apply {
-                    party.getMembers().forEach { member -> add(member.toString()) }
-                })
-                addProperty("leader", party.leader.toString())
-                add("invitations", JsonArray().apply { party.invitations.forEach { add(it.toString()) } })
-                if (party.marathon != null) {
-                    add("marathon", JsonObject().apply {
-                        add("points", JsonObject().apply {
-                            party.marathon?.getPoints()?.forEach { (k, v) -> addProperty(k.toString(), v) }
-                        })
-                        addProperty("endsAt", party.marathon?.endsAt)
+    private fun createJsonObjectForParty(party: PartyManager.Party): JsonObject {
+        return JsonObject().apply {
+            addProperty("id", party.id)
+            add("members", JsonArray().apply {
+                party.getMembers().forEach { member -> add(member.toString()) }
+            })
+            addProperty("leader", party.leader.toString())
+            add("invitations", JsonArray().apply { party.invitations.forEach { add(it.toString()) } })
+            if (party.marathon != null) {
+                add("marathon", JsonObject().apply {
+                    add("points", JsonObject().apply {
+                        party.marathon?.getPoints()?.forEach { (k, v) -> addProperty(k.toString(), v) }
                     })
-                }
+                    addProperty("endsAt", party.marathon?.endsAt)
+                })
             }
         }
     }

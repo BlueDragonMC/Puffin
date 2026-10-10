@@ -1,9 +1,7 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils
-import com.google.gson.JsonElement
 import com.google.inject.Inject
 import com.google.inject.Singleton
 import kotlinx.coroutines.Job
@@ -16,7 +14,7 @@ import kotlin.time.Duration.Companion.milliseconds
 interface IPartyManager {
     fun getParties(): Set<PartyManager.Party>
     fun partyOf(player: UUID): PartyManager.Party?
-    fun registerPartyUpdateCallback(cb: (action: String, id: String, updated: JsonElement?) -> Unit)
+    fun registerPartyUpdateCallback(cb: (action: String, id: String, party: PartyManager.Party?) -> Unit)
 }
 
 /**
@@ -56,9 +54,9 @@ class PartyManager @Inject constructor(
         return "<$color>$username"
     }
 
-    private val partyUpdateCallbacks = mutableListOf<(action: String, id: String, updated: JsonElement?) -> Unit>()
+    private val partyUpdateCallbacks = mutableListOf<(action: String, id: String, party: Party?) -> Unit>()
 
-    override fun registerPartyUpdateCallback(cb: (action: String, id: String, updated: JsonElement?) -> Unit) {
+    override fun registerPartyUpdateCallback(cb: (action: String, id: String, party: Party?) -> Unit) {
         partyUpdateCallbacks.add(cb)
     }
 
@@ -154,7 +152,7 @@ class PartyManager @Inject constructor(
             }
 
         init {
-            svc.partyUpdateCallbacks.forEach { it("add", id, ApiService.createJsonObjectForParty(this)) }
+            svc.partyUpdateCallbacks.forEach { it("add", id, this) }
         }
 
         fun add(player: UUID) {
@@ -235,7 +233,7 @@ class PartyManager @Inject constructor(
         }
 
         private fun sendUpdate() {
-            svc.partyUpdateCallbacks.forEach { it("update", id, ApiService.createJsonObjectForParty(this)) }
+            svc.partyUpdateCallbacks.forEach { it("update", id, this) }
         }
 
         fun removeInvitation(player: UUID) {

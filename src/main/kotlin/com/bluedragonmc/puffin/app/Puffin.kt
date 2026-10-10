@@ -2,7 +2,6 @@ package com.bluedragonmc.puffin.app
 
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.dashboard.ApiService
-import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.grpc.GameStateGrpcService
 import com.bluedragonmc.puffin.grpc.InstanceGrpcService
 import com.bluedragonmc.puffin.grpc.JukeboxGrpcService
@@ -24,7 +23,7 @@ class Puffin {
 
     val module = Module { binder ->
         binder.bind(ApplicationScope::class.java)
-        binder.bind(IApiService::class.java).to(ApiService::class.java)
+        binder.bind(ApiService::class.java)
         binder.bind(DatabaseConnection::class.java)
         binder.bind(IGameServerManager::class.java).to(GameServerManager::class.java)
         binder.bind(IK8sServiceDiscovery::class.java).to(K8sServiceDiscovery::class.java)
