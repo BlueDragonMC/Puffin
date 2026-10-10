@@ -25,7 +25,8 @@ interface IPlayerTracker {
     fun updateGameServerPlayers(serverName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
     suspend fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance)
     fun updateProxyPlayers(proxyPodName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
-    suspend fun getPlayerCount(gameType: CommonTypes.GameType?): Int
+    fun getPlayerCount(instanceIds: Collection<String>?): Int
+    suspend fun cleanup(serverNames: Set<String>, gameIds: Set<String>)
     suspend fun getChannelToPlayer(player: UUID): ManagedChannel?
     suspend fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
 
@@ -39,6 +40,7 @@ interface IPlayerTracker {
 
     fun registerInstanceChangeCallback(cb: (player: UUID, serverName: String, gameId: String) -> Unit)
     fun registerLogoutCallback(cb: (player: UUID) -> Unit)
+    fun registerGameIdChangeCallback(cb: suspend (player: UUID) -> Unit)
     val playerTrackerService: PlayerTracker.PlayerTrackerService
 }
 
@@ -48,7 +50,6 @@ interface IPlayerTracker {
 @Singleton
 class PlayerTracker @Inject constructor(
     val databaseConnection: DatabaseConnection,
-    val queueService: IQueueService,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
     val applicationScope: ApplicationScope
 ) : Service(), IPlayerTracker {
@@ -109,7 +110,7 @@ class PlayerTracker @Inject constructor(
             gameId != old && gameId != null
         }
         if (changed) {
-            queueService.removeFromQueue(player)
+            gameIdChangeCallbacks.forEach { it(player) }
         }
     }
 
@@ -157,30 +158,31 @@ class PlayerTracker @Inject constructor(
         }
     }
 
-    override suspend fun getPlayerCount(gameType: CommonTypes.GameType?): Int {
-        return if (gameType == null) {
+    override fun getPlayerCount(instanceIds: Collection<String>?): Int {
+        return if (instanceIds == null) {
             withPlayers { players.size }
         } else {
-            // Get a list of matching instances
-            val instances = queueService.getGamesMatching(gameType).map { it.id }
-            // Count the amount of players in any of these instances
-            withPlayers { players.entries.count { (_, state) -> state.gameId != null && instances.contains(state.gameId) } }
+            // Count the amount of players in any of the given instances
+            withPlayers { players.entries.count { (_, state) -> state.gameId != null && instanceIds.contains(state.gameId) } }
         }
     }
 
-    suspend fun cleanup() {
+    /**
+     * Reconciles tracked player state against the currently known [serverNames] and [gameIds],
+     * clearing references to servers, instances, or proxies that no longer exist.
+     */
+    override suspend fun cleanup(serverNames: Set<String>, gameIds: Set<String>) {
         withPlayers {
             players.entries.removeIf { (_, player) ->
                 player.gameId == null && player.gameServerName == null && player.proxyPodName == null
             }
         }
-        val servers = queueService.getServers()
         val proxies = k8sServiceDiscovery.getAllProxies()
         for ((player, state) in getPlayers()) {
-            if (servers.none { it.name == state.gameServerName }) {
+            if (state.gameServerName !in serverNames) {
                 setServer(player, null)
             }
-            if (servers.none { it.games.any { game -> game.id == state.gameId } }) {
+            if (state.gameId !in gameIds) {
                 setGameId(player, null)
             }
             if (state.proxyPodName !in proxies) {
@@ -242,14 +244,6 @@ class PlayerTracker @Inject constructor(
         k8sServiceDiscovery.registerProxyPlayerListener { podName, response ->
             updateProxyPlayers(podName, response)
         }
-
-        applicationScope.repeatingTask(
-            name = "PlayerTracker cleanup",
-            initialDelayMillis = 10_000L,
-            periodMillis = 10_000L
-        ) {
-            cleanup()
-        }
     }
 
     private val instanceChangeCallbacks = mutableListOf<(player: UUID, serverName: String, gameId: String) -> Unit>()
@@ -262,6 +256,12 @@ class PlayerTracker @Inject constructor(
 
     override fun registerLogoutCallback(cb: (player: UUID) -> Unit) {
         logoutCallbacks.add(cb)
+    }
+
+    private val gameIdChangeCallbacks = mutableListOf<suspend (player: UUID) -> Unit>()
+
+    override fun registerGameIdChangeCallback(cb: suspend (player: UUID) -> Unit) {
+        gameIdChangeCallbacks.add(cb)
     }
 
     override val playerTrackerService by lazy { PlayerTrackerService() }
@@ -281,7 +281,6 @@ class PlayerTracker @Inject constructor(
             logger.info("Logout > ${request.username} $oldState")
             logoutCallbacks.forEach { it(uuid) }
             databaseConnection.evictCachesForPlayer(uuid)
-            queueService.removeFromQueue(uuid)
 
             if (oldState?.gameId == null)
                 logger.warn("Player logged out without a recorded instance: uuid=$uuid")

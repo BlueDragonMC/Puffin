@@ -420,7 +420,9 @@ class GameServerManager @Inject constructor(
         override suspend fun getTotalPlayerCount(request: ServerTracking.PlayerCountRequest): ServerTracking.PlayerCountResponse =
             handleRPC {
                 return playerCountResponse {
-                    totalPlayers = playerTracker.getPlayerCount(request.filterGameTypeOrNull)
+                    val matchingInstanceIds = request.filterGameTypeOrNull
+                        ?.let { gameType -> queueService.getGamesMatching(gameType).map { it.id } }
+                    totalPlayers = playerTracker.getPlayerCount(matchingInstanceIds)
                 }
             }
     }

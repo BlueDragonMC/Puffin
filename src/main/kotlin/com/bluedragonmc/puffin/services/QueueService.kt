@@ -123,6 +123,24 @@ class QueueService @Inject constructor(
 
     private val data = Data()
 
+    init {
+        playerTracker.registerGameIdChangeCallback { removeFromQueue(it) }
+        playerTracker.registerLogoutCallback { applicationScope.launch { removeFromQueue(it) } }
+
+        // Reconcile tracked player state against the servers and instances we know about.
+        applicationScope.repeatingTask(
+            name = "PlayerTracker cleanup",
+            initialDelayMillis = 10_000L,
+            periodMillis = 10_000L
+        ) {
+            val servers = getServers()
+            playerTracker.cleanup(
+                serverNames = servers.mapTo(mutableSetOf()) { it.name },
+                gameIds = servers.flatMapTo(mutableSetOf()) { server -> server.games.map { it.id } }
+            )
+        }
+    }
+
     override suspend fun getServers(): List<GameServer> = data.withServers { servers -> ArrayList(servers) }
     override suspend fun getServer(serverName: String) =
         data.withServers { servers -> servers.find { it.name == serverName } }
