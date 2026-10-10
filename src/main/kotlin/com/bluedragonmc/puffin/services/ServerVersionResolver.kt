@@ -1,8 +1,7 @@
 package com.bluedragonmc.puffin.services
 
+import com.google.inject.Inject
 import com.google.inject.Singleton
-import io.kubernetes.client.util.Config
-import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
 import org.slf4j.LoggerFactory
 
@@ -37,13 +36,11 @@ interface ServerVersionResolver {
  * is the image configured on the Fleet that owns it.
  */
 @Singleton
-class AgonesFleetVersionResolver : ServerVersionResolver {
+class AgonesFleetVersionResolver @Inject constructor(
+    private val kubernetesClients: KubernetesClients,
+) : ServerVersionResolver {
 
     private val logger = LoggerFactory.getLogger(AgonesFleetVersionResolver::class.java)
-
-    private val fleets by lazy {
-        DynamicKubernetesApi("agones.dev", "v1", "fleets", Config.defaultClient())
-    }
 
     /**
      * Map of Fleet name to the image that each Fleet currently expects its GameServers to run.
@@ -53,7 +50,7 @@ class AgonesFleetVersionResolver : ServerVersionResolver {
 
     override fun refresh() {
         try {
-            fleetImages = fleets.list().`object`.items
+            fleetImages = kubernetesClients.fleets.list().`object`.items
                 .mapNotNull { fleet ->
                     val name = fleet.metadata.name ?: return@mapNotNull null
                     val image = desiredImage(fleet) ?: return@mapNotNull null

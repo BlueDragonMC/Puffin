@@ -3,7 +3,7 @@ package com.bluedragonmc.puffin.grpc
 import com.bluedragonmc.api.grpc.Map
 import com.bluedragonmc.api.grpc.MapServiceGrpcKt
 import com.bluedragonmc.puffin.services.DatabaseConnection
-import com.bluedragonmc.puffin.services.MapService
+import com.bluedragonmc.puffin.services.IMapService
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -15,7 +15,7 @@ import java.util.UUID
  */
 @Singleton
 class MapGrpcService @Inject constructor(
-    private val mapService: MapService,
+    private val mapService: IMapService,
     private val db: DatabaseConnection,
 ) : MapServiceGrpcKt.MapServiceCoroutineImplBase() {
 

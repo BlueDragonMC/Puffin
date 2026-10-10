@@ -13,9 +13,6 @@ import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import io.grpc.StatusException
 import io.kubernetes.client.openapi.ApiException
-import io.kubernetes.client.openapi.apis.CoreV1Api
-import io.kubernetes.client.util.Config
-import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -58,10 +55,8 @@ class GameServerManager @Inject constructor(
     private val applicationScope: ApplicationScope,
     private val config: PuffinConfig,
     private val grpcChannels: GrpcChannels,
+    private val kubernetesClients: KubernetesClients,
 ) : Service(), IGameServerManager {
-
-    private val client = DynamicKubernetesApi("agones.dev", "v1", "gameservers", Config.defaultClient())
-    private val defaultApi = CoreV1Api(Config.defaultClient())
 
     private val syncAttempts = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofMinutes(2))
@@ -113,7 +108,7 @@ class GameServerManager @Inject constructor(
 
     suspend fun reloadGameServers() = stateMutex.withLock {
         withContext(Dispatchers.IO) { refreshFleetVersions() }
-        val items = withContext(Dispatchers.IO) { client.list().`object`.items }
+        val items = withContext(Dispatchers.IO) { kubernetesClients.gameServers.list().`object`.items }
         val previousK8sObjects = ArrayList(kubernetesObjects)
         items.forEach { server ->
             if (previousK8sObjects.none { it.metadata.uid == server.metadata.uid }) {
@@ -150,7 +145,7 @@ class GameServerManager @Inject constructor(
     }
 
     private suspend fun watch() = withContext(Dispatchers.IO) {
-        val watch = client.watch()
+        val watch = kubernetesClients.gameServers.watch()
         watch.forEach { event ->
             stateMutex.withLock {
                 val obj = event.`object`
@@ -289,7 +284,7 @@ class GameServerManager @Inject constructor(
             if (config.devMode) return
 
             try {
-                withContext(Dispatchers.IO) { defaultApi.readNamespacedPod(serverName, config.k8sNamespace).execute() }
+                withContext(Dispatchers.IO) { kubernetesClients.coreV1.readNamespacedPod(serverName, config.k8sNamespace).execute() }
             } catch (e: ApiException) {
                 // If there was an error looking up the pod, it likely no longer exists.
                 // This means there was some sort of desync between our watch and the reality in the cluster.

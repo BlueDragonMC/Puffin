@@ -17,12 +17,21 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.util.*
 
+interface IMapService {
+    suspend fun getAvailableMaps(
+        gameName: String?,
+        mode: String?,
+        mapId: String?,
+        whitelistedPlayers: Collection<UUID>?
+    ): List<CommonTypes.MapSource>
+}
+
 @Singleton
 class MapService @Inject constructor(
     private val db: DatabaseConnection,
     private val applicationScope: ApplicationScope,
     private val config: PuffinConfig,
-) : Service() {
+) : Service(), IMapService {
     private data class MapWithConfig(
         val mapSource: CommonTypes.MapSource,
         val config: ConfigurationNode
@@ -80,7 +89,7 @@ class MapService @Inject constructor(
         }
     }
 
-    suspend fun getAvailableMaps(
+    override suspend fun getAvailableMaps(
         gameName: String?,
         mode: String?,
         mapId: String?,

@@ -15,10 +15,22 @@ interface IPartyManager {
     fun getParties(): Set<Party>
     fun partyOf(player: UUID): Party?
     fun registerPartyUpdateCallback(cb: (action: String, id: String, party: Party?) -> Unit)
+    fun createParty(leader: UUID): Party
+    suspend fun getUsername(uuid: UUID): String
     fun getMembers(party: Party): List<UUID>
     fun getLeader(party: Party): UUID
     fun getInvitations(party: Party): Map<UUID, Job>
     fun getMarathon(party: Party): Marathon?
+    fun hasInvitation(party: Party, player: UUID): Boolean
+    fun addMember(party: Party, player: UUID)
+    fun removeMember(party: Party, player: UUID)
+    fun setLeader(party: Party, newLeader: UUID)
+    fun addInvitation(party: Party, player: UUID, job: Job)
+    fun removeInvitation(party: Party, player: UUID)
+    fun startMarathon(party: Party, durationMs: Long)
+    fun endMarathon(party: Party)
+    fun addMarathonPoints(party: Party, uuid: UUID, amount: Int)
+    suspend fun formatMarathonLeaderboard(marathon: Marathon): String
 }
 
 /**
@@ -46,7 +58,7 @@ class PartyManager @Inject constructor(
     override fun getParties() = synchronized(partyLock) { parties.toSet() }
     override fun partyOf(player: UUID) = synchronized(partyLock) { parties.find { player in it.members } }
 
-    internal fun createParty(leader: UUID) = synchronized(partyLock) {
+    override fun createParty(leader: UUID) = synchronized(partyLock) {
         val party = Party(mutableListOf(leader), mutableMapOf(), leader)
         parties.add(party)
         notifyPartyUpdate("add", party.id, party)
@@ -60,7 +72,7 @@ class PartyManager @Inject constructor(
     /**
      * Returns the username of the UUID, with an (optional) MiniMessage-formatted color prepended.
      */
-    internal suspend fun getUsername(uuid: UUID): String {
+    override suspend fun getUsername(uuid: UUID): String {
         val color = databaseConnection.getPlayerNameColor(uuid)
         val username = databaseConnection.getPlayerName(uuid) ?: uuid.toString()
         return "<$color>$username"
@@ -72,37 +84,37 @@ class PartyManager @Inject constructor(
     override fun getLeader(party: Party) = synchronized(partyLock) { party.leader }
     override fun getMarathon(party: Party) = synchronized(partyLock) { party.marathon }
     override fun getInvitations(party: Party) = synchronized(partyLock) { party.invitations.toMap() }
-    fun hasInvitation(party: Party, player: UUID) = synchronized(partyLock) { party.invitations.containsKey(player) }
+    override fun hasInvitation(party: Party, player: UUID) = synchronized(partyLock) { party.invitations.containsKey(player) }
 
-    fun addMember(party: Party, player: UUID) = synchronized(partyLock) {
+    override fun addMember(party: Party, player: UUID) = synchronized(partyLock) {
         party.members.add(player)
         party.invitations.remove(player)?.cancel()
         update(party)
     }
 
-    fun removeMember(party: Party, player: UUID) = synchronized(partyLock) {
+    override fun removeMember(party: Party, player: UUID) = synchronized(partyLock) {
         party.members.remove(player)
         update(party)
     }
 
-    fun setLeader(party: Party, newLeader: UUID) = synchronized(partyLock) {
+    override fun setLeader(party: Party, newLeader: UUID) = synchronized(partyLock) {
         val changed = party.leader != newLeader
         party.leader = newLeader
         if (changed) update(party)
     }
 
-    fun addInvitation(party: Party, player: UUID, job: Job) = synchronized(partyLock) {
+    override fun addInvitation(party: Party, player: UUID, job: Job) = synchronized(partyLock) {
         party.invitations[player]?.cancel()
         party.invitations[player] = job
         update(party)
     }
 
-    fun removeInvitation(party: Party, player: UUID) = synchronized(partyLock) {
+    override fun removeInvitation(party: Party, player: UUID) = synchronized(partyLock) {
         party.invitations.remove(player)?.cancel()
         update(party)
     }
 
-    fun startMarathon(party: Party, durationMs: Long) = synchronized(partyLock) {
+    override fun startMarathon(party: Party, durationMs: Long) = synchronized(partyLock) {
         val endsAt = System.currentTimeMillis() + durationMs
         val marathon = Marathon(endsAt, ConcurrentHashMap())
         party.marathon = marathon
@@ -117,17 +129,17 @@ class PartyManager @Inject constructor(
         update(party)
     }
 
-    fun endMarathon(party: Party) = synchronized(partyLock) {
+    override fun endMarathon(party: Party) = synchronized(partyLock) {
         clearMarathon(party)
         update(party)
     }
 
-    fun addMarathonPoints(party: Party, uuid: UUID, amount: Int) = synchronized(partyLock) {
+    override fun addMarathonPoints(party: Party, uuid: UUID, amount: Int) = synchronized(partyLock) {
         party.marathon?.points?.merge(uuid, amount, Int::plus)
         update(party)
     }
 
-    suspend fun formatMarathonLeaderboard(marathon: Marathon): String {
+    override suspend fun formatMarathonLeaderboard(marathon: Marathon): String {
         val snapshot = marathon.points.toMap()
         if (snapshot.isEmpty()) {
             return "<gray><lang:puffin.party.marathon.current_leaderboard.no_points>"

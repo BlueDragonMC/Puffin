@@ -12,10 +12,7 @@ import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import io.grpc.ManagedChannel
 import io.kubernetes.client.openapi.ApiException
-import io.kubernetes.client.openapi.Configuration
-import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.V1PodList
-import io.kubernetes.client.util.Config
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,9 +54,8 @@ class K8sServiceDiscovery @Inject constructor(
     private val applicationScope: ApplicationScope,
     private val config: PuffinConfig,
     private val grpcChannels: GrpcChannels,
+    private val kubernetesClients: KubernetesClients,
 ) : Service(), IK8sServiceDiscovery {
-
-    private lateinit var api: CoreV1Api
 
     private val serverAddresses = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofMinutes(60))
@@ -67,11 +63,6 @@ class K8sServiceDiscovery @Inject constructor(
         .build<String, String?>()
 
     override fun start() {
-        val client = Config.defaultClient()
-        Configuration.setDefaultApiClient(client)
-
-        api = CoreV1Api()
-
         // Kubernetes isn't expected in development mode
         if (config.devMode) return
 
@@ -119,7 +110,7 @@ class K8sServiceDiscovery @Inject constructor(
 
     private fun getProxies(): V1PodList {
         try {
-            return api.listNamespacedPod(config.k8sNamespace).labelSelector("app=proxy").execute()
+            return kubernetesClients.coreV1.listNamespacedPod(config.k8sNamespace).labelSelector("app=proxy").execute()
         } catch (e: ApiException) {
             logger.error("There was an error while listing proxy pods!")
             logger.error("HTTP status code: ${e.code}")
@@ -137,7 +128,7 @@ class K8sServiceDiscovery @Inject constructor(
         }
         return withContext(Dispatchers.IO) {
             serverAddresses.get(podName) {
-                val pod = api.readNamespacedPod(podName, config.k8sNamespace).execute()
+                val pod = kubernetesClients.coreV1.readNamespacedPod(podName, config.k8sNamespace).execute()
                 pod.status?.podIP
             }
         }
@@ -154,7 +145,7 @@ class K8sServiceDiscovery @Inject constructor(
         }
         return withContext(Dispatchers.IO) {
             serverAddresses.get(serverName) {
-                val pod = api.readNamespacedPod(serverName, config.k8sNamespace).execute()
+                val pod = kubernetesClients.coreV1.readNamespacedPod(serverName, config.k8sNamespace).execute()
                 pod.status?.podIP
             }
         }

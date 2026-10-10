@@ -6,8 +6,8 @@ import com.bluedragonmc.api.grpc.ServiceDiscovery
 import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.services.IGameServerManager
 import com.bluedragonmc.puffin.services.IK8sServiceDiscovery
+import com.bluedragonmc.puffin.services.IMapService
 import com.bluedragonmc.puffin.services.IQueueService
-import com.bluedragonmc.puffin.services.MapService
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -20,7 +20,7 @@ class LobbyGrpcService @Inject constructor(
     private val gameServerManager: IGameServerManager,
     private val queueService: IQueueService,
     private val k8sServiceDiscovery: IK8sServiceDiscovery,
-    private val mapService: MapService,
+    private val mapService: IMapService,
     private val config: PuffinConfig,
 ) : LobbyServiceGrpcKt.LobbyServiceCoroutineImplBase() {
 

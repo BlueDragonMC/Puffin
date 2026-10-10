@@ -80,7 +80,7 @@ interface IQueueService {
 
 @Singleton
 class QueueService @Inject constructor(
-    private val mapService: MapService,
+    private val mapService: IMapService,
     private val playerTracker: IPlayerTracker,
     private val k8sServiceDiscovery: IK8sServiceDiscovery,
     private val applicationScope: ApplicationScope

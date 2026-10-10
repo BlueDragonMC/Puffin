@@ -5,10 +5,10 @@ import com.bluedragonmc.api.grpc.PartyServiceGrpcKt
 import com.bluedragonmc.api.grpc.PartySvc
 import com.bluedragonmc.api.grpc.partyListResponse
 import com.bluedragonmc.puffin.app.ApplicationScope
+import com.bluedragonmc.puffin.services.IPartyManager
 import com.bluedragonmc.puffin.services.IPlayerTracker
 import com.bluedragonmc.puffin.services.IQueueService
 import com.bluedragonmc.puffin.services.Party
-import com.bluedragonmc.puffin.services.PartyManager
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
@@ -23,7 +23,7 @@ import java.util.UUID
  */
 @Singleton
 class PartyGrpcService @Inject constructor(
-    private val partyManager: PartyManager,
+    private val partyManager: IPartyManager,
     private val playerTracker: IPlayerTracker,
     private val queueService: IQueueService,
     private val applicationScope: ApplicationScope,
