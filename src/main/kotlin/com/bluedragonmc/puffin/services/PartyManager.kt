@@ -24,9 +24,9 @@ interface IPartyManager {
  */
 @Singleton
 class PartyManager @Inject constructor(
-    val databaseConnection: DatabaseConnection,
-    val playerTracker: IPlayerTracker,
-    val applicationScope: ApplicationScope,
+    private val databaseConnection: DatabaseConnection,
+    private val playerTracker: IPlayerTracker,
+    private val applicationScope: ApplicationScope,
 ) : Service(), IPartyManager {
 
     private val parties = mutableSetOf<Party>()

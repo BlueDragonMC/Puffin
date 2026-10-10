@@ -23,19 +23,19 @@ import java.util.*
 interface IApiService {
     fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?)
     fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject)
-    suspend fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject
+    suspend fun createJsonObjectForGameServer(gs: GameServer): JsonObject
     suspend fun createJsonObjectForGame(gameId: String): JsonObject
-    suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject
+    suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerState): JsonObject
 }
 
 @Singleton
 class ApiService @Inject constructor(
-    val databaseConnection: DatabaseConnection,
-    val playerTracker: IPlayerTracker,
-    val partyManager: IPartyManager,
-    val gameServerManager: IGameServerManager,
-    val queueService: IQueueService,
-    val applicationScope: ApplicationScope,
+    private val databaseConnection: DatabaseConnection,
+    private val playerTracker: IPlayerTracker,
+    private val partyManager: IPartyManager,
+    private val gameServerManager: IGameServerManager,
+    private val queueService: IQueueService,
+    private val applicationScope: ApplicationScope,
 ) : Service(), IApiService {
 
     inner class SocketServer(addr: InetSocketAddress) : WebSocketServer(addr) {
@@ -214,9 +214,9 @@ class ApiService @Inject constructor(
         sendUpdate(resource, action, id, json)
     }
 
-    override suspend fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject {
+    override suspend fun createJsonObjectForGameServer(gs: GameServer): JsonObject {
         return JsonObject().apply {
-            if (gs is GameServerManager.AgonesGameServer) {
+            if (gs is AgonesGameServer) {
                 add("raw", gs.`object`.raw)
             }
             addProperty("name", gs.name)
@@ -252,7 +252,7 @@ class ApiService @Inject constructor(
         }
     }
 
-    override suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject {
+    override suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerState): JsonObject {
         return JsonObject().apply {
             addProperty("uuid", uuid.toString())
             addProperty("username", databaseConnection.getPlayerName(uuid))

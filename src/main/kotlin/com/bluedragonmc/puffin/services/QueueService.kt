@@ -80,10 +80,10 @@ interface IQueueService {
 
 @Singleton
 class QueueService @Inject constructor(
-    val mapService: MapService,
-    val playerTracker: IPlayerTracker,
-    val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val applicationScope: ApplicationScope
+    private val mapService: MapService,
+    private val playerTracker: IPlayerTracker,
+    private val k8sServiceDiscovery: IK8sServiceDiscovery,
+    private val applicationScope: ApplicationScope
 ) : Service(), IQueueService {
 
     // The actual data is kept separate from its usages to require that the locking methods be used when accessing it

@@ -53,11 +53,11 @@ sealed interface GameServerEvent {
  */
 @Singleton
 class GameServerManager @Inject constructor(
-    val playerTracker: IPlayerTracker,
-    val queueService: IQueueService,
-    val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val versionResolver: ServerVersionResolver,
-    val applicationScope: ApplicationScope
+    private val playerTracker: IPlayerTracker,
+    private val queueService: IQueueService,
+    private val k8sServiceDiscovery: IK8sServiceDiscovery,
+    private val versionResolver: ServerVersionResolver,
+    private val applicationScope: ApplicationScope
 ) : Service(), IGameServerManager {
 
     private val client = DynamicKubernetesApi("agones.dev", "v1", "gameservers", Config.defaultClient())

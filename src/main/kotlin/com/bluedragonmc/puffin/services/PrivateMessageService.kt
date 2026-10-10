@@ -10,7 +10,7 @@ import java.util.*
  * Sends private messages (i.e. /msg) to players on other servers
  */
 @Singleton
-class PrivateMessageService @Inject constructor(val playerTracker: IPlayerTracker) : Service() {
+class PrivateMessageService @Inject constructor(private val playerTracker: IPlayerTracker) : Service() {
 
     /**
      * A cache of players to the last player they

@@ -51,9 +51,8 @@ interface IPlayerTracker {
  */
 @Singleton
 class PlayerTracker @Inject constructor(
-    val databaseConnection: DatabaseConnection,
-    val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val applicationScope: ApplicationScope
+    private val k8sServiceDiscovery: IK8sServiceDiscovery,
+    private val applicationScope: ApplicationScope
 ) : Service(), IPlayerTracker {
 
     private val playersLock = Any()

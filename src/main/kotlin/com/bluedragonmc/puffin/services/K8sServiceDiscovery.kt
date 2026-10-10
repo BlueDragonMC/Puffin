@@ -59,7 +59,7 @@ interface IK8sServiceDiscovery {
  */
 @Singleton
 class K8sServiceDiscovery @Inject constructor(
-    val applicationScope: ApplicationScope
+    private val applicationScope: ApplicationScope
 ) : Service(), IK8sServiceDiscovery {
 
     private lateinit var api: CoreV1Api

@@ -18,7 +18,10 @@ import java.net.InetSocketAddress
 import java.util.*
 
 @Singleton
-class MapService @Inject constructor(val db: DatabaseConnection, val applicationScope: ApplicationScope) : Service() {
+class MapService @Inject constructor(
+    private val db: DatabaseConnection,
+    private val applicationScope: ApplicationScope
+) : Service() {
     private data class MapWithConfig(
         val mapSource: CommonTypes.MapSource,
         val config: ConfigurationNode
