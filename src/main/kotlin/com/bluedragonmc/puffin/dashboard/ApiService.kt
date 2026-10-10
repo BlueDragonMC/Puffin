@@ -1,7 +1,7 @@
 package com.bluedragonmc.puffin.dashboard
 
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.services.*
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.github.fge.jsonpatch.diff.JsonDiff
@@ -36,6 +36,7 @@ class ApiService @Inject constructor(
     val partyManager: IPartyManager,
     val gameServerManager: IGameServerManager,
     val queueService: IQueueService,
+    val applicationScope: ApplicationScope,
 ) : Service(), IApiService {
 
     inner class SocketServer(addr: InetSocketAddress) : WebSocketServer(addr) {
@@ -52,7 +53,7 @@ class ApiService @Inject constructor(
         }
 
         override fun onMessage(conn: WebSocket, message: String) {
-            Puffin.IO.launch {
+            applicationScope.launch {
                 val decoded = gson.fromJson(message, JsonObject::class.java)
                 when (decoded.get("request").asString) {
                     "getGameServers" -> {
@@ -126,7 +127,7 @@ class ApiService @Inject constructor(
 
     override fun registerCallbacks() {
         playerTracker.registerInstanceChangeCallback { player, serverName, gameId ->
-            Puffin.IO.launch {
+            applicationScope.launch {
                 val state = playerTracker.getPlayer(player) ?: return@launch
                 sendUpdate(
                     "player",
@@ -142,7 +143,7 @@ class ApiService @Inject constructor(
         }
 
         queueService.registerInstanceUpdateCallback { gameId ->
-            Puffin.IO.launch {
+            applicationScope.launch {
                 sendUpdate(
                     "instance", "update", gameId,
                     createJsonObjectForGame(gameId)

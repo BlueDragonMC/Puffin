@@ -4,7 +4,7 @@ import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
-import com.bluedragonmc.puffin.app.Puffin
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
@@ -42,7 +42,8 @@ class GameServerManager @Inject constructor(
     val queueService: IQueueService,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
     val mapsService: MapService,
-    val versionResolver: ServerVersionResolver
+    val versionResolver: ServerVersionResolver,
+    val applicationScope: ApplicationScope
 ) : Service(), IGameServerManager {
 
     private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
@@ -59,7 +60,7 @@ class GameServerManager @Inject constructor(
     init {
         if (!DEV_MODE) {
 
-            Puffin.IO.launch {
+            applicationScope.launch {
                 while (true) {
                     reloadGameServers()
                     watch()
@@ -74,7 +75,7 @@ class GameServerManager @Inject constructor(
                 initialDelay = Env.GS_SYNC_PERIOD,
                 period = Env.GS_SYNC_PERIOD
             ) {
-                Puffin.IO.launch {
+                applicationScope.launch {
                     for ((serverName, _) in queueService.getServers()) {
                         launch {
                             syncExistingServer(serverName)
@@ -198,7 +199,7 @@ class GameServerManager @Inject constructor(
         queueService.addServer(gs.name)
 
         // Get all running instances on this newly-added server
-        Puffin.IO.launch {
+        applicationScope.launch {
             syncNewServer(gs.name)
         }
         apiService.sendUpdate(

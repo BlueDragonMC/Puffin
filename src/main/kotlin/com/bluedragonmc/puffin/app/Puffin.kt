@@ -6,18 +6,14 @@ import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.services.*
 import com.google.inject.Guice
 import com.google.inject.Module
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import org.slf4j.LoggerFactory
-import kotlin.coroutines.CoroutineContext
 
 class Puffin {
 
     private val logger = LoggerFactory.getLogger(Puffin::class.java)
 
     val module = Module { binder ->
+        binder.bind(ApplicationScope::class.java)
         binder.bind(IApiService::class.java).to(ApiService::class.java)
         binder.bind(DatabaseConnection::class.java)
         binder.bind(IGameServerManager::class.java).to(GameServerManager::class.java)
@@ -38,18 +34,14 @@ class Puffin {
         if (DEV_MODE) logger.warn("Starting Puffin in development mode.")
 
         val injector = Guice.createInjector(module)
+        val applicationScope = injector.getInstance(ApplicationScope::class.java)
+        Runtime.getRuntime().addShutdownHook(Thread({ applicationScope.close() }, "Puffin shutdown"))
+
         injector.getInstance(GrpcServer::class.java).start()
         injector.getInstance(ApiService::class.java).registerCallbacks()
         injector.getInstance(K8sServiceDiscovery::class.java).periodicSync()
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         injector.getInstance(GrpcServer::class.java).awaitTermination()
-    }
-
-    companion object {
-        internal val IO = object : CoroutineScope {
-            override val coroutineContext: CoroutineContext =
-                Dispatchers.IO + SupervisorJob() + CoroutineName("Puffin I/O")
-        }
     }
 }

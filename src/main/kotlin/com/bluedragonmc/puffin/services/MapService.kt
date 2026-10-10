@@ -3,8 +3,8 @@ package com.bluedragonmc.puffin.services
 import com.bluedragonmc.api.grpc.CommonTypes
 import com.bluedragonmc.api.grpc.Map
 import com.bluedragonmc.api.grpc.MapServiceGrpcKt
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -22,7 +22,7 @@ import java.net.InetSocketAddress
 import java.util.*
 
 @Singleton
-class MapService @Inject constructor(val db: DatabaseConnection) : Service() {
+class MapService @Inject constructor(val db: DatabaseConnection, val applicationScope: ApplicationScope) : Service() {
     private data class MapWithConfig(
         val mapSource: CommonTypes.MapSource,
         val config: ConfigurationNode
@@ -112,7 +112,7 @@ class MapService @Inject constructor(val db: DatabaseConnection) : Service() {
     init {
         val server = HttpServer.create(InetSocketAddress("0.0.0.0", Env.MAP_SERVICE_PORT), 0)
         server.createContext("/map/") { exchange ->
-            Puffin.IO.launch {
+            applicationScope.launch {
                 exchange.use { exchange ->
                     handleRequest(exchange)
                 }

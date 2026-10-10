@@ -4,7 +4,7 @@ import com.bluedragonmc.api.grpc.PartyListResponseKt.playerEntry
 import com.bluedragonmc.api.grpc.PartyServiceGrpcKt
 import com.bluedragonmc.api.grpc.PartySvc
 import com.bluedragonmc.api.grpc.partyListResponse
-import com.bluedragonmc.puffin.app.Puffin
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.catchingTimer
@@ -35,6 +35,7 @@ class PartyManager @Inject constructor(
     val databaseConnection: DatabaseConnection,
     val playerTracker: IPlayerTracker,
     val queueService: IQueueService,
+    val applicationScope: ApplicationScope,
 ) : Service(), IPartyManager {
 
     private val parties = mutableSetOf<Party>()
@@ -86,7 +87,7 @@ class PartyManager @Inject constructor(
         private var cancelJob: Job
 
         init {
-            cancelJob = Puffin.IO.launch {
+            cancelJob = svc.applicationScope.launch {
                 delay((endsAt - System.currentTimeMillis()).milliseconds)
                 svc.playerTracker.sendChat(
                     party.getMembers(),

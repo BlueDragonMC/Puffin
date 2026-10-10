@@ -2,13 +2,13 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
 import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
 import com.bluedragonmc.puffin.app.Env.DEFAULT_PROXY_IP
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.bluedragonmc.puffin.app.Env.PROXY_GRPC_PORT
-import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
@@ -54,7 +54,10 @@ interface IK8sServiceDiscovery {
  * Uses the Kubernetes API to list proxies and their cluster IP addresses
  */
 @Singleton
-class K8sServiceDiscovery @Inject constructor(val playerTracker: IPlayerTracker) : Service(), IK8sServiceDiscovery {
+class K8sServiceDiscovery @Inject constructor(
+    val playerTracker: IPlayerTracker,
+    val applicationScope: ApplicationScope
+) : Service(), IK8sServiceDiscovery {
 
     private val api: CoreV1Api
 
@@ -90,7 +93,7 @@ class K8sServiceDiscovery @Inject constructor(val playerTracker: IPlayerTracker)
         proxyPodNames = proxies
 
         proxies.forEach { podName ->
-            Puffin.IO.launch {
+            applicationScope.launch {
                 val channel = getChannelToProxy(podName)
                 if (channel == null) {
                     logger.warn("Couldn't get channel to proxy $podName!")

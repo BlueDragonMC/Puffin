@@ -2,7 +2,7 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
 import com.bluedragonmc.api.grpc.GsClient.SendChatRequest.ChatType
-import com.bluedragonmc.puffin.app.Puffin
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
@@ -51,7 +51,8 @@ class PlayerTracker @Inject constructor(
     val databaseConnection: DatabaseConnection,
     val queueService: IQueueService,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val partyManager: IPartyManager
+    val partyManager: IPartyManager,
+    val applicationScope: ApplicationScope
 ) : Service(), IPlayerTracker {
 
     private val players = mutableMapOf<UUID, PlayerState>()
@@ -206,11 +207,11 @@ class PlayerTracker @Inject constructor(
         }
     }
 
-    override fun sendChatAsync(player: UUID, message: String, chatType: ChatType) = Puffin.IO.launch {
+    override fun sendChatAsync(player: UUID, message: String, chatType: ChatType) = applicationScope.launch {
         sendChat(player, message, chatType)
     }
 
-    override fun sendChatAsync(player: UUID, chatType: ChatType, message: suspend () -> String) = Puffin.IO.launch {
+    override fun sendChatAsync(player: UUID, chatType: ChatType, message: suspend () -> String) = applicationScope.launch {
         sendChat(player, message(), chatType)
     }
 
@@ -219,18 +220,18 @@ class PlayerTracker @Inject constructor(
     }
 
     override fun sendChatAsync(players: Collection<UUID>, message: String, chatType: ChatType) =
-        Puffin.IO.launch {
+        applicationScope.launch {
             sendChat(players, message, chatType)
         }
 
     override fun sendChatAsync(players: Collection<UUID>, chatType: ChatType, message: suspend () -> String) =
-        Puffin.IO.launch {
+        applicationScope.launch {
             sendChat(players, message(), chatType)
         }
 
     init {
         Utils.catchingTimer("PlayerTracker cleanup", true, 10_000.toLong(), 10_000.toLong()) {
-            Puffin.IO.launch { cleanup() }
+            applicationScope.launch { cleanup() }
         }
     }
 

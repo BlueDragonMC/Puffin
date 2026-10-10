@@ -5,8 +5,8 @@ import com.bluedragonmc.api.grpc.CommonTypes.EnumGameState
 import com.bluedragonmc.api.grpc.Queue
 import com.bluedragonmc.api.grpc.Queue.GetDestinationRequest
 import com.bluedragonmc.api.grpc.Queue.GetDestinationResponse
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
@@ -86,7 +86,8 @@ class QueueService @Inject constructor(
     val partyManager: IPartyManager,
     val playerTracker: IPlayerTracker,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val gameServerManager: IGameServerManager
+    val gameServerManager: IGameServerManager,
+    val applicationScope: ApplicationScope
 ) : Service(), IQueueService {
 
     // The actual data is kept separate from its usages to require that the locking methods be used when accessing it
@@ -174,12 +175,12 @@ class QueueService @Inject constructor(
         }
         if (old != new) {
             instanceUpdateCallbacks.forEach { it(gameId) }
-            Puffin.IO.launch { processQueue() }
+            applicationScope.launch { processQueue() }
         }
     }
 
     override fun addToQueue(party: QueuedParty) {
-        Puffin.IO.launch {
+        applicationScope.launch {
             val anyPlayersAlreadyInTheQueue = data.withParties { parties ->
                 parties.any { p ->
                     p.players.any { player ->
@@ -257,7 +258,7 @@ class QueueService @Inject constructor(
                 effectivePlayerCounts[game.id] =
                     effectivePlayerCounts.getOrDefault(game.id, game.playerCount) + party.players.size
                 party.players.forEach { player ->
-                    jobs += Puffin.IO.launch {
+                    jobs += applicationScope.launch {
                         sendPlayerToInstance(player, game.id)
                     }
                 }
@@ -342,7 +343,7 @@ class QueueService @Inject constructor(
             placementServers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
             newGames.forEachIndexed { i, game ->
                 val mapSource = mapSources[i]
-                jobs += Puffin.IO.launch {
+                jobs += applicationScope.launch {
                     val id = effectiveGameCounts.minByOrNull { it.value }?.key
                     if (id == null) {
                         logger.warn("No game servers are available to create an instance for ${game.gameType}; will retry.")
@@ -426,7 +427,7 @@ class QueueService @Inject constructor(
         data.withServers { servers ->
             servers.removeIf { it.name == name }
         }
-        Puffin.IO.launch { processQueue() }
+        applicationScope.launch { processQueue() }
     }
 
     override suspend fun addServer(name: String) {
@@ -435,7 +436,7 @@ class QueueService @Inject constructor(
                 servers.add(GameServer(name, emptyList()))
             }
         }
-        Puffin.IO.launch { processQueue() }
+        applicationScope.launch { processQueue() }
     }
 
     override suspend fun setServerDraining(name: String, draining: Boolean) {
@@ -456,7 +457,7 @@ class QueueService @Inject constructor(
                 }
             }
         }
-        Puffin.IO.launch { processQueue() }
+        applicationScope.launch { processQueue() }
     }
 
     override suspend fun getGamesMatching(gameType: CommonTypes.GameType) =
@@ -485,7 +486,7 @@ class QueueService @Inject constructor(
                 }
             }
         }
-        Puffin.IO.launch { processQueue() }
+        applicationScope.launch { processQueue() }
     }
 
     override suspend fun getGames() = data.withServers { servers -> servers.flatMap { it.games } }
