@@ -9,9 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import java.time.Duration
-import java.time.Instant
 import java.util.*
-import java.util.concurrent.TimeUnit
 import kotlin.concurrent.fixedRateTimer
 
 object Utils {
@@ -19,12 +17,9 @@ object Utils {
         .expireAfterAccess(Duration.ofMinutes(5))
         .expireAfterWrite(Duration.ofMinutes(10))
         .evictionListener { addr: String?, channel: ManagedChannel?, _ ->
-            // Shut down all channels when they are removed from the cache for any reason.
+            // Shut down channels when they are removed from the cache.
             if (channel != null && !channel.isShutdown) {
                 channel.shutdown()
-                if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
-                    logger.error("Failed to shutdown gRPC channel to address $addr within 5 seconds!")
-                }
             }
         }
         .build()
