@@ -83,6 +83,9 @@ class GameServerManager @Inject constructor(
     }
 
     init {
+        // Let the queue resolve game server addresses without depending on GameServerManager directly.
+        queueService.registerGameServerLookup { getK8sObject(it) }
+
         if (!DEV_MODE) {
 
             applicationScope.launch {

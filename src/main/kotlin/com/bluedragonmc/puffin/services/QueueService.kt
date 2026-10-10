@@ -82,6 +82,11 @@ interface IQueueService {
      */
     fun registerPartyLookup(lookup: (UUID) -> PartyManager.Party?)
 
+    /**
+     * Registers the lookup used by the queue to resolve a game server's address and port.
+     */
+    fun registerGameServerLookup(lookup: suspend (serverName: String) -> GameServerManager.GameServer?)
+
     suspend fun sendPlayerToInstance(player: UUID, gameId: String)
     val queueService: QueueService.QueueService
     val gameStateService: QueueService.GameStateService
@@ -92,7 +97,6 @@ class QueueService @Inject constructor(
     val mapService: MapService,
     val playerTracker: IPlayerTracker,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val gameServerManager: IGameServerManager,
     val applicationScope: ApplicationScope
 ) : Service(), IQueueService {
 
@@ -132,6 +136,13 @@ class QueueService @Inject constructor(
 
     override fun registerPartyLookup(lookup: (UUID) -> PartyManager.Party?) {
         partyLookup = lookup
+    }
+
+    /** Resolves a game server by name, or `null` if unknown. Registered by [GameServerManager]. */
+    private var gameServerLookup: suspend (String) -> GameServerManager.GameServer? = { null }
+
+    override fun registerGameServerLookup(lookup: suspend (serverName: String) -> GameServerManager.GameServer?) {
+        gameServerLookup = lookup
     }
 
     init {
@@ -559,7 +570,7 @@ class QueueService @Inject constructor(
             return
         }
 
-        val gameServerObj = gameServerManager.getK8sObject(serverName) ?: run {
+        val gameServerObj = gameServerLookup(serverName) ?: run {
             logger.warn("No IP/Port was found for server name $serverName! Sending players to this server may not be possible.")
             return
         }
