@@ -45,17 +45,17 @@ private const val QUEUE_PARTY_MAX_ATTEMPTS = 5
  * Chooses which game servers new games may be created on. Up-to-date (non-draining) servers are
  * preferred; draining servers are only used when every server is draining.
  */
-internal fun placementCandidates(servers: List<QueueService.GameServer>): List<QueueService.GameServer> =
+internal fun placementCandidates(servers: List<QueueServer>): List<QueueServer> =
     servers.filter { !it.draining }.ifEmpty { servers }
 
 interface IQueueService {
-    suspend fun getServers(): List<QueueService.GameServer>
-    suspend fun getServer(serverName: String): QueueService.GameServer?
-    suspend fun getGame(gameId: String): QueueService.Game?
+    suspend fun getServers(): List<QueueServer>
+    suspend fun getServer(serverName: String): QueueServer?
+    suspend fun getGame(gameId: String): Game?
     suspend fun getServerOfGame(gameId: String): String?
     fun registerInstanceUpdateCallback(cb: (gameId: String) -> Unit)
     suspend fun setGameState(gameId: String, newState: CommonTypes.GameState)
-    fun addToQueue(party: QueueService.QueuedParty)
+    fun addToQueue(party: QueuedParty)
     suspend fun removeFromQueue(player: UUID): Boolean
 
     suspend fun processQueue()
@@ -63,15 +63,15 @@ interface IQueueService {
         gameState: EnumGameState,
         gameType: CommonTypes.GameType,
         partySize: Int
-    ): QueueService.Game?
+    ): Game?
 
     suspend fun removeServer(name: String)
     suspend fun addServer(name: String, address: String?, port: Int?)
     suspend fun setServerDraining(name: String, draining: Boolean)
     suspend fun removeGame(serverName: String, gameId: String)
-    suspend fun getGamesMatching(gameType: CommonTypes.GameType): List<QueueService.Game>
+    suspend fun getGamesMatching(gameType: CommonTypes.GameType): List<Game>
     suspend fun addGame(serverName: String, gameId: String, gameType: CommonTypes.GameType, gameState: CommonTypes.GameState)
-    suspend fun getGames(): List<QueueService.Game>
+    suspend fun getGames(): List<Game>
     fun setDestination(player: UUID, gameId: String)
 
     suspend fun sendPlayerToInstance(player: UUID, gameId: String)
@@ -93,14 +93,14 @@ class QueueService @Inject constructor(
          * and then by how specific their queue request is.
          */
         private val queuedParties =
-            TreeSet<QueuedParty>(Comparator.comparingInt<QueuedParty> { -it.players.size }.thenComparingInt {
+            TreeSet(Comparator.comparingInt<QueuedParty> { -it.players.size }.thenComparingInt {
                 var i = 0
                 if (it.gameType.hasMapId()) i++
                 if (it.gameType.hasMode()) i++
                 i
             })
 
-        private val servers = mutableListOf<GameServer>()
+        private val servers = mutableListOf<QueueServer>()
 
         private val queuedPartiesMutex = Mutex()
         private val serversMutex = Mutex()
@@ -110,7 +110,7 @@ class QueueService @Inject constructor(
                 block(queuedParties)
             }
 
-        suspend inline fun <R> withServers(block: suspend (MutableList<GameServer>) -> R): R = serversMutex.withLock {
+        suspend inline fun <R> withServers(block: suspend (MutableList<QueueServer>) -> R): R = serversMutex.withLock {
             block(servers)
         }
     }
@@ -135,7 +135,7 @@ class QueueService @Inject constructor(
         }
     }
 
-    override suspend fun getServers(): List<GameServer> = data.withServers { servers -> ArrayList(servers) }
+    override suspend fun getServers(): List<QueueServer> = data.withServers { servers -> ArrayList(servers) }
     override suspend fun getServer(serverName: String) =
         data.withServers { servers -> servers.find { it.name == serverName } }
 
@@ -260,7 +260,7 @@ class QueueService @Inject constructor(
             if (isEmpty) {
                 return@withLock
             }
-            val servers: List<GameServer> = data.withServers { servers -> servers.toList() }
+            val servers: List<QueueServer> = data.withServers { servers -> servers.toList() }
             val jobs = mutableListOf<Job>()
             val games = servers.flatMap { it.games }
             // game id -> effective player count
@@ -404,30 +404,6 @@ class QueueService @Inject constructor(
         return maps.isNotEmpty()
     }
 
-    data class GameServer(
-        val name: String,
-        val games: List<Game>,
-        val address: String? = null,
-        val port: Int? = null,
-        val draining: Boolean = false,
-    )
-
-    data class Game(
-        val id: String,
-        val gameType: CommonTypes.GameType,
-        val playerCount: Int,
-        val maxPlayers: Int,
-        val state: EnumGameState,
-    ) {
-        val emptySlots get() = maxPlayers - playerCount
-    }
-
-    data class QueuedParty(
-        val players: List<UUID>, val gameType: CommonTypes.GameType
-    ) {
-        var attempts = 0
-    }
-
     override suspend fun getBestAvailableInstance(
         gameState: EnumGameState,
         gameType: CommonTypes.GameType,
@@ -453,7 +429,7 @@ class QueueService @Inject constructor(
         data.withServers { servers ->
             val index = servers.indexOfFirst { it.name == name }
             if (index == -1) {
-                servers.add(GameServer(name, emptyList(), address = address, port = port))
+                servers.add(QueueServer(name, emptyList(), address = address, port = port))
             } else {
                 // A server may be discovered before its address/port are known (or vice versa);
                 // keep whichever values we have.

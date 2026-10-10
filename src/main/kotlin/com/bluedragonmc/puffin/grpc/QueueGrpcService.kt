@@ -8,7 +8,7 @@ import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.services.IPartyManager
 import com.bluedragonmc.puffin.services.IPlayerTracker
 import com.bluedragonmc.puffin.services.IQueueService
-import com.bluedragonmc.puffin.services.QueueService
+import com.bluedragonmc.puffin.services.QueuedParty
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -40,7 +40,7 @@ class QueueGrpcService @Inject constructor(
         } else {
             party?.getMembers() ?: listOf(playerUuid)
         }
-        queueService.addToQueue(QueueService.QueuedParty(queuedPlayers, request.gameType))
+        queueService.addToQueue(QueuedParty(queuedPlayers, request.gameType))
 
         return Empty.getDefaultInstance()
     }

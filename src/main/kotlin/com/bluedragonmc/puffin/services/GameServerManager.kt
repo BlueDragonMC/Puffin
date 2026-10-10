@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 import java.time.Duration
 
 interface IGameServerManager {
-    suspend fun getK8sObject(serverName: String): GameServerManager.AgonesGameServer?
+    suspend fun getK8sObject(serverName: String): GameServer?
 
     fun registerGameServerListener(listener: suspend (GameServerEvent) -> Unit)
 
@@ -40,10 +40,10 @@ interface IGameServerManager {
  * Notifications emitted by [GameServerManager] about game servers and their instances.
  */
 sealed interface GameServerEvent {
-    data class Added(val server: GameServerManager.GameServer) : GameServerEvent
+    data class Added(val server: GameServer) : GameServerEvent
     data class Removed(val name: String) : GameServerEvent
-    data class Merged(val old: GameServerManager.GameServer, val new: GameServerManager.GameServer) : GameServerEvent
-    data class Updated(val server: GameServerManager.GameServer) : GameServerEvent
+    data class Merged(val old: GameServer, val new: GameServer) : GameServerEvent
+    data class Updated(val server: GameServer) : GameServerEvent
     data class InstanceAdded(val gameId: String) : GameServerEvent
     data class InstanceRemoved(val gameId: String) : GameServerEvent
 }
@@ -314,27 +314,7 @@ class GameServerManager @Inject constructor(
         }
     }
 
-    interface GameServer {
-        val address: String
-        val name: String
-        val port: Int?
-    }
-
-    data class AgonesGameServer(val `object`: DynamicKubernetesObject) : GameServer {
-        private val status = `object`.raw.getAsJsonObject("status")
-
-        override val address: String by lazy {
-            return@lazy status.get("address").asString
-        }
-        override val port by lazy {
-            if (status.has("ports") && status.get("ports").isJsonArray) status.get("ports").asJsonArray.first { p ->
-                p.asJsonObject.get("name").asString == "minecraft"
-            }.asJsonObject.get("port").asInt else null
-        }
-        override val name = `object`.metadata.name!!
-    }
-
-    override suspend fun getK8sObject(serverName: String): AgonesGameServer? = stateMutex.withLock {
+    override suspend fun getK8sObject(serverName: String): GameServer? = stateMutex.withLock {
         kubernetesObjects.map { AgonesGameServer(it) }.find { it.name == serverName }
     }
 

@@ -14,16 +14,16 @@ import kotlinx.coroutines.launch
 import java.util.*
 
 interface IPlayerTracker {
-    fun getPlayer(uuid: UUID): PlayerTracker.PlayerState?
-    fun getPlayers(): Map<UUID, PlayerTracker.PlayerState>
+    fun getPlayer(uuid: UUID): PlayerState?
+    fun getPlayers(): Map<UUID, PlayerState>
     fun getPlayersInInstance(gameId: String): List<UUID>
     fun getPlayersOnProxy(podName: String): List<UUID>
     fun getPlayersInGameServer(serverName: String): List<UUID>
-    fun removePlayer(uuid: UUID): PlayerTracker.PlayerState?
+    fun removePlayer(uuid: UUID): PlayerState?
     fun setProxy(player: UUID, proxyPodName: String?)
     fun setServer(player: UUID, gameServerName: String?)
     suspend fun setGameId(player: UUID, gameId: String?)
-    fun handleLogout(uuid: UUID): PlayerTracker.PlayerState?
+    fun handleLogout(uuid: UUID): PlayerState?
     suspend fun handleInstanceChange(uuid: UUID, serverName: String, gameId: String)
     fun updateGameServerPlayers(serverName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
     suspend fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance)
@@ -60,8 +60,6 @@ class PlayerTracker @Inject constructor(
 
     /** Runs [block] while holding [playersLock]; the lock guards every access to [players]. */
     private inline fun <R> withPlayers(block: () -> R): R = synchronized(playersLock) { block() }
-
-    data class PlayerState(val proxyPodName: String?, val gameServerName: String?, val gameId: String?)
 
     override fun getPlayer(uuid: UUID) = withPlayers { players[uuid] }
 
