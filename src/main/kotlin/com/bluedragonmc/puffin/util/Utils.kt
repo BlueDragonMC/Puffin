@@ -81,7 +81,7 @@ object Utils {
 
         suspend fun rateLimit() {
             mutex.withLock {
-                var now = System.currentTimeMillis()
+                var now = monotonicMillis()
                 val windowStart = now - windowMillis
 
                 while (timestamps.isNotEmpty() && timestamps.first() < windowStart) {
@@ -94,7 +94,7 @@ object Utils {
 
                     delay(sleepTime)
 
-                    now = System.currentTimeMillis()
+                    now = monotonicMillis()
 
                     timestamps.removeFirst()
                 }
@@ -102,5 +102,7 @@ object Utils {
                 timestamps.addLast(now)
             }
         }
+
+        private fun monotonicMillis(): Long = System.nanoTime() / 1_000_000L
     }
 }
