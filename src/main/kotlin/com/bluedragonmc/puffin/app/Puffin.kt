@@ -1,6 +1,5 @@
 package com.bluedragonmc.puffin.app
 
-import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.grpc.GameStateGrpcService
 import com.bluedragonmc.puffin.grpc.InstanceGrpcService
@@ -12,7 +11,7 @@ import com.bluedragonmc.puffin.grpc.PlayerTrackerGrpcService
 import com.bluedragonmc.puffin.grpc.QueueGrpcService
 import com.bluedragonmc.puffin.grpc.VelocityMessageGrpcService
 import com.bluedragonmc.puffin.services.*
-import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.util.GrpcChannels
 import com.google.inject.Guice
 import com.google.inject.Module
 import org.slf4j.LoggerFactory
@@ -23,6 +22,8 @@ class Puffin {
 
     val module = Module { binder ->
         binder.bind(ApplicationScope::class.java)
+        binder.bind(PuffinConfig::class.java)
+        binder.bind(GrpcChannels::class.java)
         binder.bind(ApiService::class.java)
         binder.bind(DatabaseConnection::class.java)
         binder.bind(IGameServerManager::class.java).to(GameServerManager::class.java)
@@ -50,10 +51,12 @@ class Puffin {
     fun initialize() {
         val start = System.nanoTime()
 
-        if (DEV_MODE) logger.warn("Starting Puffin in development mode.")
-
         val injector = Guice.createInjector(module)
+        val config = injector.getInstance(PuffinConfig::class.java)
+        if (config.devMode) logger.warn("Starting Puffin in development mode.")
+
         val applicationScope = injector.getInstance(ApplicationScope::class.java)
+        val grpcChannels = injector.getInstance(GrpcChannels::class.java)
         val databaseConnection = injector.getInstance(DatabaseConnection::class.java)
         val playerTracker = injector.getInstance(PlayerTracker::class.java)
         val partyManager = injector.getInstance(PartyManager::class.java)
@@ -90,7 +93,7 @@ class Puffin {
             partyManager.close()
             playerTracker.close()
             databaseConnection.close()
-            Utils.closeAllChannels()
+            grpcChannels.closeAll()
         }, "Puffin shutdown"))
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")

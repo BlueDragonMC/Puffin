@@ -2,7 +2,7 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.CommonTypes
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.app.Env
+import com.bluedragonmc.puffin.app.PuffinConfig
 import com.google.inject.Inject
 import com.google.inject.Singleton
 import com.sun.net.httpserver.HttpExchange
@@ -20,7 +20,8 @@ import java.util.*
 @Singleton
 class MapService @Inject constructor(
     private val db: DatabaseConnection,
-    private val applicationScope: ApplicationScope
+    private val applicationScope: ApplicationScope,
+    private val config: PuffinConfig,
 ) : Service() {
     private data class MapWithConfig(
         val mapSource: CommonTypes.MapSource,
@@ -44,7 +45,7 @@ class MapService @Inject constructor(
     }
 
     private val anvilFileMaps by lazy {
-        File(Env.WORLDS_FOLDER).listFiles()
+        File(config.worldsFolder).listFiles()
             .flatMap { file: File -> file.listFiles().toList() }
             .mapNotNull { file: File ->
                 val configFile = file.resolve("config.yml")
@@ -93,7 +94,7 @@ class MapService @Inject constructor(
     private lateinit var httpServer: HttpServer
 
     override fun start() {
-        httpServer = HttpServer.create(InetSocketAddress("0.0.0.0", Env.MAP_SERVICE_PORT), 0)
+        httpServer = HttpServer.create(InetSocketAddress("0.0.0.0", config.mapServicePort), 0)
         httpServer.createContext("/map/") { exchange ->
             applicationScope.launch {
                 exchange.use { exchange ->

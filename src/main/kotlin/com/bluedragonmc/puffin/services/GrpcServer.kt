@@ -1,6 +1,6 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.puffin.app.Env.GRPC_SERVER_PORT
+import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.grpc.*
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -20,12 +20,13 @@ class GrpcServer @Inject constructor(
     private val playerTrackerGrpcService: PlayerTrackerGrpcService,
     private val velocityMessageGrpcService: VelocityMessageGrpcService,
     private val jukeboxGrpcService: JukeboxGrpcService,
+    private val config: PuffinConfig,
 ) : Service() {
 
     private lateinit var server: Server
 
     override fun start() {
-        server = ServerBuilder.forPort(GRPC_SERVER_PORT)
+        server = ServerBuilder.forPort(config.grpcServerPort)
             .addService(mapGrpcService)
             .addService(lobbyGrpcService)
             .addService(instanceGrpcService)
@@ -39,7 +40,7 @@ class GrpcServer @Inject constructor(
             .build()
 
         server.start()
-        logger.info("gRPC server started on port $GRPC_SERVER_PORT.")
+        logger.info("gRPC server started on port ${config.grpcServerPort}.")
     }
 
     fun awaitTermination() {

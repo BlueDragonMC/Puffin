@@ -3,7 +3,7 @@ package com.bluedragonmc.puffin.grpc
 import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.api.grpc.LobbyServiceGrpcKt
 import com.bluedragonmc.api.grpc.ServiceDiscovery
-import com.bluedragonmc.puffin.app.Env
+import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.services.IGameServerManager
 import com.bluedragonmc.puffin.services.IK8sServiceDiscovery
 import com.bluedragonmc.puffin.services.IQueueService
@@ -21,6 +21,7 @@ class LobbyGrpcService @Inject constructor(
     private val queueService: IQueueService,
     private val k8sServiceDiscovery: IK8sServiceDiscovery,
     private val mapService: MapService,
+    private val config: PuffinConfig,
 ) : LobbyServiceGrpcKt.LobbyServiceCoroutineImplBase() {
 
     override suspend fun findLobby(request: ServiceDiscovery.FindLobbyRequest): ServiceDiscovery.FindLobbyResponse =
@@ -35,7 +36,7 @@ class LobbyGrpcService @Inject constructor(
 
             for (server in lobbyServers) {
                 for (game in server.games) {
-                    if (game.gameType.name == Env.LOBBY_GAME_NAME) {
+                    if (game.gameType.name == config.lobbyGameName) {
                         val info = gameServerManager.getK8sObject(server.name) ?: continue
                         return ServiceDiscovery.FindLobbyResponse.newBuilder()
                             .setFound(true)
@@ -62,8 +63,8 @@ class LobbyGrpcService @Inject constructor(
                 ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
             val response = stub.createInstance(
                 GsClient.CreateInstanceRequest.newBuilder()
-                    .setGame(Env.LOBBY_GAME_NAME)
-                    .setMapSource(mapService.getAvailableMaps(Env.LOBBY_GAME_NAME, null, null, null).random())
+                    .setGame(config.lobbyGameName)
+                    .setMapSource(mapService.getAvailableMaps(config.lobbyGameName, null, null, null).random())
                     .build()
             )
 

@@ -1,13 +1,12 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.CommonTypes
-import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.app.Env.LUCKPERMS_API_URL
-import com.bluedragonmc.puffin.app.Env.MONGO_CONNECTION_STRING
+import com.bluedragonmc.puffin.app.PuffinConfig
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.google.inject.Inject
 import com.google.inject.Singleton
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
@@ -36,7 +35,7 @@ import java.util.concurrent.TimeUnit
  * Connects to MongoDB to fetch player names, UUIDs, colors, etc. Caches responses in memory.
  */
 @Singleton
-class DatabaseConnection : Service() {
+class DatabaseConnection @Inject constructor(private val config: PuffinConfig) : Service() {
 
     private val mongoClient: CoroutineClient
     private val httpClient: OkHttpClient
@@ -61,7 +60,7 @@ class DatabaseConnection : Service() {
         userColorCache.getIfPresent(uuid)?.let { return it }
         val color = withContext(Dispatchers.IO) {
             val request = Request.Builder()
-                .url("$LUCKPERMS_API_URL/user/$uuid/meta")
+                .url("${config.luckpermsApiUrl}/user/$uuid/meta")
                 .get()
                 .build()
             val responseBody = httpClient.newCall(request).execute().body?.string()
@@ -136,7 +135,7 @@ class DatabaseConnection : Service() {
             .setMapId(mapId)
             .setMapConfig(doc.toJson())
             .setMapFormat(CommonTypes.MapFormat.POLAR)
-            .setMapUrl("http://${Env.MAP_SERVICE_HOST}:${Env.MAP_SERVICE_PORT}/map/$mapId/data")
+            .setMapUrl("http://${config.mapServiceHost}:${config.mapServicePort}/map/$mapId/data")
             .build()
     }
 
@@ -160,7 +159,7 @@ class DatabaseConnection : Service() {
             .build()
 
         mongoClient = KMongo.createClient(MongoClientSettings.builder()
-            .applyConnectionString(ConnectionString(MONGO_CONNECTION_STRING))
+            .applyConnectionString(ConnectionString(config.mongoConnectionString))
             .applyToSocketSettings { block ->
                 block.connectTimeout(5, TimeUnit.SECONDS)
             }.applyToClusterSettings { block ->

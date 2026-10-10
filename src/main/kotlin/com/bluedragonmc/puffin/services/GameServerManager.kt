@@ -5,10 +5,8 @@ import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
 import com.bluedragonmc.api.grpc.ServerTracking
 import com.bluedragonmc.api.grpc.instanceCreatedRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.app.Env.DEV_MODE
-import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
-import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.app.PuffinConfig
+import com.bluedragonmc.puffin.util.GrpcChannels
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -57,7 +55,9 @@ class GameServerManager @Inject constructor(
     private val queueService: IQueueService,
     private val k8sServiceDiscovery: IK8sServiceDiscovery,
     private val versionResolver: ServerVersionResolver,
-    private val applicationScope: ApplicationScope
+    private val applicationScope: ApplicationScope,
+    private val config: PuffinConfig,
+    private val grpcChannels: GrpcChannels,
 ) : Service(), IGameServerManager {
 
     private val client = DynamicKubernetesApi("agones.dev", "v1", "gameservers", Config.defaultClient())
@@ -84,7 +84,7 @@ class GameServerManager @Inject constructor(
     }
 
     override fun start() {
-        if (DEV_MODE) return
+        if (config.devMode) return
 
         applicationScope.launch {
             while (true) {
@@ -97,8 +97,8 @@ class GameServerManager @Inject constructor(
 
         applicationScope.repeatingTask(
             name = "GameManager Periodic Sync",
-            initialDelayMillis = Env.GS_SYNC_PERIOD,
-            periodMillis = Env.GS_SYNC_PERIOD
+            initialDelayMillis = config.gsSyncPeriod,
+            periodMillis = config.gsSyncPeriod
         ) {
             for ((serverName, _) in queueService.getServers()) {
                 applicationScope.launch {
@@ -201,7 +201,7 @@ class GameServerManager @Inject constructor(
         logger.info("GameServer ${gs.name} was removed.")
         queueService.removeServer(gs.name)
         readyGameServers.remove(gs.name)
-        Utils.closeChannel(gs.address)
+        grpcChannels.close(gs.address)
         notifyListeners(GameServerEvent.Removed(gs.name))
     }
 
@@ -219,12 +219,12 @@ class GameServerManager @Inject constructor(
     }
 
     private fun refreshFleetVersions() {
-        if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
+        if (config.devMode || !config.drainOutdatedServers) return
         versionResolver.refresh()
     }
 
     private suspend fun updateDraining() {
-        if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
+        if (config.devMode || !config.drainOutdatedServers) return
         kubernetesObjects.forEach { updateDraining(it) }
     }
 
@@ -232,7 +232,7 @@ class GameServerManager @Inject constructor(
      * Recomputes whether [object] is running an outdated version.
      */
     private suspend fun updateDraining(`object`: DynamicKubernetesObject) {
-        if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
+        if (config.devMode || !config.drainOutdatedServers) return
         val gs = AgonesGameServer(`object`)
         val draining = isOutdated(`object`)
         val server = queueService.getServer(gs.name) ?: return
@@ -286,10 +286,10 @@ class GameServerManager @Inject constructor(
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {
-            if (DEV_MODE) return
+            if (config.devMode) return
 
             try {
-                withContext(Dispatchers.IO) { defaultApi.readNamespacedPod(serverName, K8S_NAMESPACE).execute() }
+                withContext(Dispatchers.IO) { defaultApi.readNamespacedPod(serverName, config.k8sNamespace).execute() }
             } catch (e: ApiException) {
                 // If there was an error looking up the pod, it likely no longer exists.
                 // This means there was some sort of desync between our watch and the reality in the cluster.

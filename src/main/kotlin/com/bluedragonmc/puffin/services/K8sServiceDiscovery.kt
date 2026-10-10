@@ -4,13 +4,8 @@ import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
 import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
 import com.bluedragonmc.api.grpc.PlayerHolderOuterClass
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.app.Env.DEFAULT_GS_IP
-import com.bluedragonmc.puffin.app.Env.DEFAULT_PROXY_IP
-import com.bluedragonmc.puffin.app.Env.DEV_MODE
-import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
-import com.bluedragonmc.puffin.app.Env.PROXY_GRPC_PORT
-import com.bluedragonmc.puffin.util.Utils
+import com.bluedragonmc.puffin.app.PuffinConfig
+import com.bluedragonmc.puffin.util.GrpcChannels
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -59,7 +54,9 @@ interface IK8sServiceDiscovery {
  */
 @Singleton
 class K8sServiceDiscovery @Inject constructor(
-    private val applicationScope: ApplicationScope
+    private val applicationScope: ApplicationScope,
+    private val config: PuffinConfig,
+    private val grpcChannels: GrpcChannels,
 ) : Service(), IK8sServiceDiscovery {
 
     private lateinit var api: CoreV1Api
@@ -76,14 +73,14 @@ class K8sServiceDiscovery @Inject constructor(
         api = CoreV1Api()
 
         // Kubernetes isn't expected in development mode
-        if (DEV_MODE) return
+        if (config.devMode) return
 
         // Perform an initial sync immediately, then keep it up to date periodically.
         applicationScope.launch { periodicSync() }
         applicationScope.repeatingTask(
             name = "K8sServiceDiscovery Periodic Sync",
-            initialDelayMillis = Env.K8S_SYNC_PERIOD,
-            periodMillis = Env.K8S_SYNC_PERIOD
+            initialDelayMillis = config.k8sSyncPeriod,
+            periodMillis = config.k8sSyncPeriod
         ) {
             periodicSync()
         }
@@ -122,7 +119,7 @@ class K8sServiceDiscovery @Inject constructor(
 
     private fun getProxies(): V1PodList {
         try {
-            return api.listNamespacedPod(K8S_NAMESPACE).labelSelector("app=proxy").execute()
+            return api.listNamespacedPod(config.k8sNamespace).labelSelector("app=proxy").execute()
         } catch (e: ApiException) {
             logger.error("There was an error while listing proxy pods!")
             logger.error("HTTP status code: ${e.code}")
@@ -135,12 +132,12 @@ class K8sServiceDiscovery @Inject constructor(
      * Gets the pod IP address of the specified pod
      */
     override suspend fun getProxyIP(podName: String): String? {
-        if (DEV_MODE) {
-            return DEFAULT_PROXY_IP
+        if (config.devMode) {
+            return config.defaultProxyIp
         }
         return withContext(Dispatchers.IO) {
             serverAddresses.get(podName) {
-                val pod = api.readNamespacedPod(podName, K8S_NAMESPACE).execute()
+                val pod = api.readNamespacedPod(podName, config.k8sNamespace).execute()
                 pod.status?.podIP
             }
         }
@@ -152,12 +149,12 @@ class K8sServiceDiscovery @Inject constructor(
      * address, because it is only accessible from inside the cluster.
      */
     override suspend fun getGameServerIP(serverName: String): String? {
-        if (DEV_MODE) {
-            return DEFAULT_GS_IP
+        if (config.devMode) {
+            return config.defaultGsIp
         }
         return withContext(Dispatchers.IO) {
             serverAddresses.get(serverName) {
-                val pod = api.readNamespacedPod(serverName, K8S_NAMESPACE).execute()
+                val pod = api.readNamespacedPod(serverName, config.k8sNamespace).execute()
                 pod.status?.podIP
             }
         }
@@ -179,7 +176,7 @@ class K8sServiceDiscovery @Inject constructor(
             logger.warn("Failed to get server address for game server '$serverName' (Can't get gRPC channel to the server)")
             return null
         }
-        return Utils.channelTo(addr, Env.GS_GRPC_PORT)
+        return grpcChannels.channelTo(addr, config.gsGrpcPort)
     }
 
     override suspend fun getChannelToProxy(proxyPodName: String): ManagedChannel? {
@@ -188,6 +185,6 @@ class K8sServiceDiscovery @Inject constructor(
             logger.warn("Failed to get server address for proxy '$proxyPodName' (Can't get gRPC channel to the server)")
             return null
         }
-        return Utils.channelTo(addr, PROXY_GRPC_PORT)
+        return grpcChannels.channelTo(addr, config.proxyGrpcPort)
     }
 }

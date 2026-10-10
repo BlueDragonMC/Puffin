@@ -1,7 +1,7 @@
 package com.bluedragonmc.puffin.dashboard
 
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.app.Env
+import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.services.*
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.github.fge.jsonpatch.diff.JsonDiff
@@ -28,6 +28,7 @@ class ApiService @Inject constructor(
     private val gameServerManager: IGameServerManager,
     private val queueService: IQueueService,
     private val applicationScope: ApplicationScope,
+    config: PuffinConfig,
 ) : Service() {
 
     inner class SocketServer(addr: InetSocketAddress) : WebSocketServer(addr) {
@@ -110,7 +111,7 @@ class ApiService @Inject constructor(
     }
 
     private val ws: WebSocketServer =
-        SocketServer(InetSocketAddress(InetAddress.getByName("0.0.0.0"), Env.API_SERVICE_PORT))
+        SocketServer(InetSocketAddress(InetAddress.getByName("0.0.0.0"), config.apiServicePort))
 
     override fun start() {
         registerCallbacks()

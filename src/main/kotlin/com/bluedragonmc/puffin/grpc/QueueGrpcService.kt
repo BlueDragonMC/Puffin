@@ -4,7 +4,7 @@ import com.bluedragonmc.api.grpc.Queue
 import com.bluedragonmc.api.grpc.Queue.GetDestinationRequest
 import com.bluedragonmc.api.grpc.Queue.GetDestinationResponse
 import com.bluedragonmc.api.grpc.QueueServiceGrpcKt
-import com.bluedragonmc.puffin.app.Env
+import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.services.IPartyManager
 import com.bluedragonmc.puffin.services.IPlayerTracker
 import com.bluedragonmc.puffin.services.IQueueService
@@ -23,12 +23,13 @@ class QueueGrpcService @Inject constructor(
     private val queueService: IQueueService,
     private val partyManager: IPartyManager,
     private val playerTracker: IPlayerTracker,
+    private val config: PuffinConfig,
 ) : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
 
     override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty = handleRPC {
         val playerUuid = UUID.fromString(request.playerUuid)
         val party = partyManager.partyOf(playerUuid)
-        val isLobby = request.gameType.name == Env.LOBBY_GAME_NAME
+        val isLobby = request.gameType.name == config.lobbyGameName
         if (party != null && partyManager.getLeader(party) != playerUuid && !isLobby) {
             playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
             return@handleRPC Empty.getDefaultInstance()
@@ -49,7 +50,7 @@ class QueueGrpcService @Inject constructor(
         for (request in request.requestsList) {
             val uuid = UUID.fromString(request.playerUuid)
             val party = partyManager.partyOf(uuid)
-            if (party == null || partyManager.getLeader(party) == uuid || request.gameType.name == Env.LOBBY_GAME_NAME) {
+            if (party == null || partyManager.getLeader(party) == uuid || request.gameType.name == config.lobbyGameName) {
                 addToQueue(request)
             }
         }

@@ -1,54 +1,12 @@
 package com.bluedragonmc.puffin.util
 
-import com.github.benmanes.caffeine.cache.Cache
-import com.github.benmanes.caffeine.cache.Caffeine
-import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
-import java.time.Duration
-import java.util.*
 
 object Utils {
-    private val channels: Cache<String, ManagedChannel> = Caffeine.newBuilder()
-        .expireAfterAccess(Duration.ofMinutes(5))
-        .expireAfterWrite(Duration.ofMinutes(10))
-        .evictionListener { addr: String?, channel: ManagedChannel?, _ ->
-            // Shut down channels when they are removed from the cache.
-            if (channel != null && !channel.isShutdown) {
-                channel.shutdown()
-            }
-        }
-        .build()
-
-    private val logger = LoggerFactory.getLogger(this::class.java)
-
-    fun channelTo(addr: String, port: Int): ManagedChannel {
-        return channels.get(addr) {
-            logger.debug("Building managed channel with address '$addr' and port '$port'.")
-            ManagedChannelBuilder.forAddress(addr, port).usePlaintext().build()
-        }
-    }
-
-    fun closeChannel(addr: String) {
-        val channel = channels.getIfPresent(addr)
-        channel?.shutdown()
-        channels.invalidate(addr)
-    }
-
-    /** Shuts down and clears every cached channel. Called during shutdown. */
-    fun closeAllChannels() {
-        channels.asMap().values.forEach { channel ->
-            if (!channel.isShutdown) {
-                channel.shutdown()
-            }
-        }
-        channels.invalidateAll()
-        channels.cleanUp()
-    }
 
     inline fun <R : Any> handleRPC(handler: () -> R): R {
         try {
