@@ -18,7 +18,7 @@ class JukeboxService @Inject constructor(val playerTracker: IPlayerTracker) : Se
 
     inner class JukeboxRedirectService : JukeboxGrpcKt.JukeboxCoroutineImplBase() {
 
-        private fun stubTo(playerUUID: String): JukeboxGrpcKt.JukeboxCoroutineStub? {
+        private suspend fun stubTo(playerUUID: String): JukeboxGrpcKt.JukeboxCoroutineStub? {
             return playerTracker.getChannelToPlayer(UUID.fromString(playerUUID))?.let {
                 JukeboxGrpcKt.JukeboxCoroutineStub(it)
             }

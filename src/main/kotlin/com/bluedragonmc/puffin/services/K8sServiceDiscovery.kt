@@ -20,7 +20,9 @@ import io.kubernetes.client.openapi.Configuration
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.V1PodList
 import io.kubernetes.client.util.Config
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.util.*
 
@@ -28,26 +30,26 @@ interface IK8sServiceDiscovery {
     /**
      * Gets the pod IP address of the specified pod
      */
-    fun getProxyIP(podName: String): String?
+    suspend fun getProxyIP(podName: String): String?
 
     /**
      * Gets the pod IP address of the proxy that the player is on (null if unknown)
      */
-    fun getProxyIP(player: UUID): String?
+    suspend fun getProxyIP(player: UUID): String?
 
     /**
      * Gets the pod IP address of a game server by its name
      * This should be different from the Agones-provided IP
      * address, because it is only accessible from inside the cluster.
      */
-    fun getGameServerIP(serverName: String): String?
+    suspend fun getGameServerIP(serverName: String): String?
     fun getAllProxies(): List<String>
-    fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
-    fun getChannelToServer(serverName: String): ManagedChannel?
-    fun getChannelToProxyOf(player: UUID): ManagedChannel?
-    fun getChannelToProxy(proxyPodName: String): ManagedChannel?
+    suspend fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
+    suspend fun getChannelToServer(serverName: String): ManagedChannel?
+    suspend fun getChannelToProxyOf(player: UUID): ManagedChannel?
+    suspend fun getChannelToProxy(proxyPodName: String): ManagedChannel?
 
-    fun periodicSync()
+    suspend fun periodicSync()
 }
 
 /**
@@ -87,8 +89,9 @@ class K8sServiceDiscovery @Inject constructor(
     @Volatile
     private var proxyPodNames = listOf<String>()
 
-    override fun periodicSync() {
-        val proxies = getProxies().items.mapNotNull { it.metadata?.name }
+    override suspend fun periodicSync() {
+        val podList = withContext(Dispatchers.IO) { getProxies() }
+        val proxies = podList.items.mapNotNull { it.metadata?.name }
         proxyPodNames = proxies
 
         proxies.forEach { podName ->
@@ -121,27 +124,31 @@ class K8sServiceDiscovery @Inject constructor(
     /**
      * Gets the pod IP address of the specified pod
      */
-    override fun getProxyIP(podName: String): String? {
+    override suspend fun getProxyIP(podName: String): String? {
         if (DEV_MODE) {
             return DEFAULT_PROXY_IP
         }
-        return serverAddresses.get(podName) {
-            val pod = api.readNamespacedPod(podName, K8S_NAMESPACE).execute()
-            pod.status?.podIP
+        return withContext(Dispatchers.IO) {
+            serverAddresses.get(podName) {
+                val pod = api.readNamespacedPod(podName, K8S_NAMESPACE).execute()
+                pod.status?.podIP
+            }
         }
     }
 
     /**
      * Gets the pod IP address of the proxy that the player is on (null if unknown)
      */
-    override fun getProxyIP(player: UUID): String? {
+    override suspend fun getProxyIP(player: UUID): String? {
         if (DEV_MODE) {
             return DEFAULT_PROXY_IP
         }
         val proxy = playerTracker.getPlayer(player)?.proxyPodName ?: return null
-        return serverAddresses.get(proxy) {
-            val pod = api.readNamespacedPod(proxy, K8S_NAMESPACE).execute()
-            pod.status?.podIP
+        return withContext(Dispatchers.IO) {
+            serverAddresses.get(proxy) {
+                val pod = api.readNamespacedPod(proxy, K8S_NAMESPACE).execute()
+                pod.status?.podIP
+            }
         }
     }
 
@@ -150,27 +157,29 @@ class K8sServiceDiscovery @Inject constructor(
      * This should be different from the Agones-provided IP
      * address, because it is only accessible from inside the cluster.
      */
-    override fun getGameServerIP(serverName: String): String? {
+    override suspend fun getGameServerIP(serverName: String): String? {
         if (DEV_MODE) {
             return DEFAULT_GS_IP
         }
-        return serverAddresses.get(serverName) {
-            val pod = api.readNamespacedPod(serverName, K8S_NAMESPACE).execute()
-            pod.status?.podIP
+        return withContext(Dispatchers.IO) {
+            serverAddresses.get(serverName) {
+                val pod = api.readNamespacedPod(serverName, K8S_NAMESPACE).execute()
+                pod.status?.podIP
+            }
         }
     }
 
     override fun getAllProxies(): List<String> = proxyPodNames
 
 
-    override fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub? {
+    override suspend fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub? {
         return GsClientServiceGrpcKt.GsClientServiceCoroutineStub(
             getChannelToServer(serverName) ?: return null
         )
     }
 
 
-    override fun getChannelToServer(serverName: String): ManagedChannel? {
+    override suspend fun getChannelToServer(serverName: String): ManagedChannel? {
         logger.debug("Getting gRPC channel to game server with name: '$serverName'")
         val addr = getGameServerIP(serverName) ?: run {
             logger.warn("Failed to get server address for game server '$serverName' (Can't get gRPC channel to the server)")
@@ -179,12 +188,12 @@ class K8sServiceDiscovery @Inject constructor(
         return Utils.channelTo(addr, Env.GS_GRPC_PORT)
     }
 
-    override fun getChannelToProxyOf(player: UUID): ManagedChannel? =
+    override suspend fun getChannelToProxyOf(player: UUID): ManagedChannel? =
         getProxyIP(player)?.let { address ->
             return Utils.channelTo(address, PROXY_GRPC_PORT)
         }
 
-    override fun getChannelToProxy(proxyPodName: String): ManagedChannel? {
+    override suspend fun getChannelToProxy(proxyPodName: String): ManagedChannel? {
         logger.debug("Getting gRPC channel to proxy with name: '$proxyPodName'")
         val addr = getProxyIP(proxyPodName) ?: run {
             logger.warn("Failed to get server address for proxy '$proxyPodName' (Can't get gRPC channel to the server)")

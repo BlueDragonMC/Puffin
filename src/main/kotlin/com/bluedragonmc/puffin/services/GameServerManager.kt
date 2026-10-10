@@ -1,10 +1,10 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.*
+import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
-import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
@@ -18,10 +18,12 @@ import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.util.Config
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.time.Duration
 
 interface IGameServerManager {
@@ -88,8 +90,8 @@ class GameServerManager @Inject constructor(
     }
 
     suspend fun reloadGameServers() = stateMutex.withLock {
-        refreshFleetVersions()
-        val items = client.list().`object`.items
+        withContext(Dispatchers.IO) { refreshFleetVersions() }
+        val items = withContext(Dispatchers.IO) { client.list().`object`.items }
         val previousK8sObjects = ArrayList(kubernetesObjects)
         items.forEach { server ->
             if (previousK8sObjects.none { it.metadata.uid == server.metadata.uid }) {
@@ -131,7 +133,7 @@ class GameServerManager @Inject constructor(
         updateDraining()
     }
 
-    private suspend fun watch() {
+    private suspend fun watch() = withContext(Dispatchers.IO) {
         val watch = client.watch()
         watch.forEach { event ->
             stateMutex.withLock {
@@ -278,7 +280,7 @@ class GameServerManager @Inject constructor(
             if (DEV_MODE) return
 
             try {
-                defaultApi.readNamespacedPod(serverName, K8S_NAMESPACE).execute()
+                withContext(Dispatchers.IO) { defaultApi.readNamespacedPod(serverName, K8S_NAMESPACE).execute() }
             } catch (e: ApiException) {
                 // If there was an error looking up the pod, it likely no longer exists.
                 // This means there was some sort of desync between our watch and the reality in the cluster.

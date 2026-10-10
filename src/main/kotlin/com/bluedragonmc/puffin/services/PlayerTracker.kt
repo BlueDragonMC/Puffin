@@ -26,8 +26,8 @@ interface IPlayerTracker {
     suspend fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance)
     fun updateProxyPlayers(proxyPodName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
     suspend fun getPlayerCount(gameType: CommonTypes.GameType?): Int
-    fun getChannelToPlayer(player: UUID): ManagedChannel?
-    fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
+    suspend fun getChannelToPlayer(player: UUID): ManagedChannel?
+    suspend fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
 
     suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT)
     fun sendChatAsync(player: UUID, message: String, chatType: ChatType = ChatType.CHAT): Job
@@ -190,7 +190,7 @@ class PlayerTracker @Inject constructor(
         }
     }
 
-    override fun getChannelToPlayer(player: UUID): ManagedChannel? {
+    override suspend fun getChannelToPlayer(player: UUID): ManagedChannel? {
         val serverName = getPlayer(player)?.gameServerName ?: run {
             logger.warn("Failed to get server name of player $player (Can't get gRPC channel to the player's server)")
             return null
@@ -198,7 +198,7 @@ class PlayerTracker @Inject constructor(
         return k8sServiceDiscovery.getChannelToServer(serverName)
     }
 
-    override fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub? {
+    override suspend fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub? {
         return GsClientServiceGrpcKt.GsClientServiceCoroutineStub(
             getChannelToPlayer(player) ?: return null
         )

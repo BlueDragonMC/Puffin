@@ -6,6 +6,7 @@ import com.bluedragonmc.puffin.dashboard.IApiService
 import com.bluedragonmc.puffin.services.*
 import com.google.inject.Guice
 import com.google.inject.Module
+import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 
 class Puffin {
@@ -39,7 +40,7 @@ class Puffin {
 
         injector.getInstance(GrpcServer::class.java).start()
         injector.getInstance(ApiService::class.java).registerCallbacks()
-        injector.getInstance(K8sServiceDiscovery::class.java).periodicSync()
+        applicationScope.launch { injector.getInstance(K8sServiceDiscovery::class.java).periodicSync() }
 
         logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         injector.getInstance(GrpcServer::class.java).awaitTermination()
