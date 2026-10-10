@@ -13,7 +13,8 @@ import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.client.model.Filters
 import com.mongodb.client.result.UpdateResult
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
@@ -56,27 +57,35 @@ class DatabaseConnection : Service() {
     private val usernameCache: Cache<UUID, String?> = builder.build()
     private val userColorCache: Cache<UUID, String> = builder.build()
 
-    fun getPlayerNameColor(uuid: UUID): String = userColorCache.get(uuid) {
-        val request = Request.Builder()
-            .url("$LUCKPERMS_API_URL/user/$uuid/meta")
-            .get()
-            .build()
-        val responseBody = httpClient.newCall(request).execute().body?.string()
-        val reply = gson.fromJson(responseBody, JsonObject::class.java)
-        reply.get("meta")?.asJsonObject?.get("rankcolor")?.asString ?: "#aaaaaa"
+    suspend fun getPlayerNameColor(uuid: UUID): String {
+        userColorCache.getIfPresent(uuid)?.let { return it }
+        val color = withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("$LUCKPERMS_API_URL/user/$uuid/meta")
+                .get()
+                .build()
+            val responseBody = httpClient.newCall(request).execute().body?.string()
+            val reply = gson.fromJson(responseBody, JsonObject::class.java)
+            reply.get("meta")?.asJsonObject?.get("rankcolor")?.asString ?: "#aaaaaa"
+        }
+        userColorCache.put(uuid, color)
+        return color
     }
 
-    fun getPlayerName(uuid: UUID): String? = usernameCache.get(uuid) {
-        runBlocking {
-            playersCollection.findOneById(uuid.toString())?.getString("username")
-        }
+    suspend fun getPlayerName(uuid: UUID): String? {
+        usernameCache.getIfPresent(uuid)?.let { return it }
+        val username = playersCollection.findOneById(uuid.toString())?.getString("username")
+        if (username != null) usernameCache.put(uuid, username)
+        return username
     }
 
-    fun getPlayerUUID(username: String): UUID? = uuidCache.get(username.lowercase()) {
-        runBlocking {
-            playersCollection.findOne(Filters.eq("usernameLower", username))?.getString("_id")
-                ?.let { UUID.fromString(it) }
-        }
+    suspend fun getPlayerUUID(username: String): UUID? {
+        val key = username.lowercase()
+        uuidCache.getIfPresent(key)?.let { return it }
+        val uuid = playersCollection.findOne(Filters.eq("usernameLower", username))?.getString("_id")
+            ?.let { UUID.fromString(it) }
+        if (uuid != null) uuidCache.put(key, uuid)
+        return uuid
     }
 
     suspend fun getMapData(id: String) =

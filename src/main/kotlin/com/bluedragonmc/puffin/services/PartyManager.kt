@@ -51,23 +51,22 @@ class PartyManager @Inject constructor(
     /**
      * Returns the username of the UUID, with an (optional) MiniMessage-formatted color prepended.
      */
-    private val UUID.name: String
-        get() = getUsername(this)
+    private suspend fun UUID.name(): String = getUsername(this)
 
-    internal fun getUsername(uuid: UUID) = databaseConnection.run {
-        val color = getPlayerNameColor(uuid)
-        val username = getPlayerName(uuid) ?: uuid.toString()
-        return@run "<$color>$username"
+    internal suspend fun getUsername(uuid: UUID): String {
+        val color = databaseConnection.getPlayerNameColor(uuid)
+        val username = databaseConnection.getPlayerName(uuid) ?: uuid.toString()
+        return "<$color>$username"
     }
 
-    private fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
+    private suspend fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
         playerTracker.sendChatAsync(
             party.getMembers(),
-            Utils.surroundWithSeparators("<p2><lang:puffin.party.invite.other:'${inviter.name}':'${invitee.name}'>")
+            Utils.surroundWithSeparators("<p2><lang:puffin.party.invite.other:'${inviter.name()}':'${invitee.name()}'>")
         )
         playerTracker.sendChatAsync(
             invitee,
-            Utils.surroundWithSeparators("<p2><click:run_command:/party accept $inviter><lang:puffin.party.invite.1:'${inviter.name}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>")
+            Utils.surroundWithSeparators("<p2><click:run_command:/party accept $inviter><lang:puffin.party.invite.1:'${inviter.name()}'>\n<p2><lang:puffin.party.invite.2:'<p2><lang:puffin.party.invite.clickable>'></click>")
         )
     }
 
@@ -111,7 +110,7 @@ class PartyManager @Inject constructor(
 
         fun getPoints() = points.toMap()
 
-        fun formatLeaderboard(): String {
+        suspend fun formatLeaderboard(): String {
             if (points.isEmpty()) {
                 return "<gray><lang:puffin.party.marathon.current_leaderboard.no_points>"
             }
@@ -200,17 +199,13 @@ class PartyManager @Inject constructor(
             if (onlineMembers.size != members.size) {
                 val removed = members - onlineMembers
                 members.retainAll(onlineMembers)
+                val recipients = members.toList()
                 removed.forEach {
-                    svc.playerTracker.sendChatAsync(
-                        members,
+                    svc.playerTracker.sendChatAsync(recipients, message = {
                         Utils.surroundWithSeparators(
-                            "<red><lang:puffin.party.player_logged_out:'${
-                                svc.getUsername(
-                                    it
-                                )
-                            }'>"
+                            "<red><lang:puffin.party.player_logged_out:'${svc.getUsername(it)}'>"
                         )
-                    )
+                    })
                 }
             }
 
@@ -218,16 +213,13 @@ class PartyManager @Inject constructor(
             if (leader !in members) {
                 val newLeader = members.firstOrNull { it != leader }
                 if (newLeader != null && canSurvive()) {
-                    svc.playerTracker.sendChatAsync(
-                        members,
+                    val recipients = members.toList()
+                    val oldLeader = leader
+                    svc.playerTracker.sendChatAsync(recipients, message = {
                         Utils.surroundWithSeparators(
-                            "<yellow><lang:puffin.party.transfer.auto:'${svc.getUsername(newLeader)}':'${
-                                svc.getUsername(
-                                    leader
-                                )
-                            }'>"
+                            "<yellow><lang:puffin.party.transfer.auto:'${svc.getUsername(newLeader)}':'${svc.getUsername(oldLeader)}'>"
                         )
-                    )
+                    })
                     _leader = newLeader
                 }
             }
@@ -277,10 +269,9 @@ class PartyManager @Inject constructor(
     override fun onLogout(player: UUID) {
         synchronized(partyLock) {
             val party = partyOf(player) ?: return
-            playerTracker.sendChatAsync(
-                party.getMembers(),
-                Utils.surroundWithSeparators("<red><lang:puffin.party.player_logged_out:'${player.name}'>")
-            )
+            playerTracker.sendChatAsync(party.getMembers(), message = {
+                Utils.surroundWithSeparators("<red><lang:puffin.party.player_logged_out:'${player.name()}'>")
+            })
             party.remove(player)
         }
     }
@@ -299,12 +290,12 @@ class PartyManager @Inject constructor(
             if (party.invitations.contains(player)) {
                 playerTracker.sendChat(
                     party.getMembers(),
-                    Utils.surroundWithSeparators("<p2><lang:puffin.party.join.other:'${player.name}'>")
+                    Utils.surroundWithSeparators("<p2><lang:puffin.party.join.other:'${player.name()}'>")
                 )
                 party.add(player)
                 playerTracker.sendChat(
                     player,
-                    Utils.surroundWithSeparators("<p2><lang:puffin.party.join.self:'${partyOwner.name}'>")
+                    Utils.surroundWithSeparators("<p2><lang:puffin.party.join.self:'${partyOwner.name()}'>")
                 )
             } else {
                 playerTracker.sendChat(player, "<red><lang:puffin.party.join.no_invitation>")
@@ -331,10 +322,9 @@ class PartyManager @Inject constructor(
                 this.cancel()
                 if (party.invitations.contains(player)) {
                     party.removeInvitation(player)
-                    playerTracker.sendChatAsync(
-                        player,
-                        "<p2><lang:puffin.party.invite.expired:'${partyOwner.name}'>"
-                    )
+                    playerTracker.sendChatAsync(player, message = {
+                        "<p2><lang:puffin.party.invite.expired:'${partyOwner.name()}'>"
+                    })
                 }
             }
             party.addInvitation(player, timer)
@@ -347,7 +337,7 @@ class PartyManager @Inject constructor(
             if (party != null) {
                 playerTracker.sendChatAsync(
                     party.getMembers(),
-                    "<p3><lang:puffin.party.chat.prefix> <white>${uuid.name}<gray>: <white>${request.message}"
+                    "<p3><lang:puffin.party.chat.prefix> <white>${uuid.name()}<gray>: <white>${request.message}"
                 )
             } else {
                 playerTracker.sendChatAsync(uuid, "<red><lang:puffin.party.chat.not_found>")
@@ -362,7 +352,7 @@ class PartyManager @Inject constructor(
                 return partyListResponse {
                     players += party.getMembers().map {
                         playerEntry {
-                            username = it.name
+                            username = it.name()
                             role = if (party.leader == it) "Leader" else "Member"
                         }
                     }
@@ -385,7 +375,7 @@ class PartyManager @Inject constructor(
                         party.remove(player)
                         playerTracker.sendChat(
                             party.getMembers(),
-                            Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.success:'${player.name}'>")
+                            Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.success:'${player.name()}'>")
                         )
                         playerTracker.sendChat(
                             player,
@@ -410,7 +400,7 @@ class PartyManager @Inject constructor(
                 playerTracker.sendChat(player, Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.self>"))
                 playerTracker.sendChat(
                     party.getMembers(),
-                    Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.others:'${player.name}'>")
+                    Utils.surroundWithSeparators("<p2><lang:puffin.party.leave.others:'${player.name()}'>")
                 )
             } else {
                 playerTracker.sendChat(player, "<red><lang:puffin.party.not_found>")
@@ -440,7 +430,7 @@ class PartyManager @Inject constructor(
             party.leader = newUuid
             playerTracker.sendChat(
                 party.getMembers(),
-                Utils.surroundWithSeparators("<p2><lang:puffin.party.transfer.success:'${newUuid.name}'>")
+                Utils.surroundWithSeparators("<p2><lang:puffin.party.transfer.success:'${newUuid.name()}'>")
             )
 
             return Empty.getDefaultInstance()
@@ -483,7 +473,7 @@ class PartyManager @Inject constructor(
             }
             playerTracker.sendChat(
                 party.getMembers(),
-                "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name}'>"
+                "<p2><lang:puffin.party.warp.success:'<p1>$membersToWarp':'${party.leader.name()}'>"
             )
 
             return Empty.getDefaultInstance()

@@ -21,6 +21,8 @@ import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Duration
 
 interface IGameServerManager {
@@ -72,21 +74,23 @@ class GameServerManager @Inject constructor(
                 initialDelay = Env.GS_SYNC_PERIOD,
                 period = Env.GS_SYNC_PERIOD
             ) {
-
-                for ((serverName, _) in queueService.getServers()) {
-                    Puffin.IO.launch {
-                        syncExistingServer(serverName)
+                Puffin.IO.launch {
+                    for ((serverName, _) in queueService.getServers()) {
+                        launch {
+                            syncExistingServer(serverName)
+                        }
                     }
-                }
 
-                // Sync game servers periodically just in case a change isn't picked up by the watcher
-                reloadGameServers()
+                    // Sync game servers periodically just in case a change isn't picked up by the watcher
+                    reloadGameServers()
+                }
             }
         }
     }
 
-    @Synchronized
-    fun reloadGameServers() {
+    private val reloadMutex = Mutex()
+
+    suspend fun reloadGameServers() = reloadMutex.withLock {
         refreshFleetVersions()
         val items = client.list().`object`.items
         val previousK8sObjects = ArrayList(kubernetesObjects)
@@ -130,7 +134,7 @@ class GameServerManager @Inject constructor(
         updateDraining()
     }
 
-    private fun watch() {
+    private suspend fun watch() {
         val watch = client.watch()
         watch.forEach { event ->
             val obj = event.`object`
@@ -179,7 +183,7 @@ class GameServerManager @Inject constructor(
         }
     }
 
-    private fun processServerRemoved(`object`: DynamicKubernetesObject) {
+    private suspend fun processServerRemoved(`object`: DynamicKubernetesObject) {
         val gs = AgonesGameServer(`object`)
         logger.info("GameServer ${gs.name} was removed.")
         queueService.removeServer(gs.name)
@@ -188,7 +192,7 @@ class GameServerManager @Inject constructor(
         apiService.sendUpdate("gameServer", "remove", gs.name, null)
     }
 
-    private fun processServerAdded(`object`: DynamicKubernetesObject) {
+    private suspend fun processServerAdded(`object`: DynamicKubernetesObject) {
         val gs = AgonesGameServer(`object`)
         logger.info("New GameServer found: ${gs.name} (${gs.address}:${gs.port})")
         queueService.addServer(gs.name)
@@ -209,7 +213,7 @@ class GameServerManager @Inject constructor(
         versionResolver.refresh()
     }
 
-    private fun updateDraining() {
+    private suspend fun updateDraining() {
         if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
         kubernetesObjects.forEach { updateDraining(it) }
     }
@@ -217,7 +221,7 @@ class GameServerManager @Inject constructor(
     /**
      * Recomputes whether [object] is running an outdated version.
      */
-    private fun updateDraining(`object`: DynamicKubernetesObject) {
+    private suspend fun updateDraining(`object`: DynamicKubernetesObject) {
         if (DEV_MODE || !Env.DRAIN_OUTDATED_SERVERS) return
         val gs = AgonesGameServer(`object`)
         val draining = isOutdated(`object`)
@@ -357,10 +361,13 @@ class GameServerManager @Inject constructor(
                 }
 
                 // Start up a lobby if one wasn't found
-                val bestServer = lobbyServers.minBy { queueService.getServer(it.name)?.games?.size ?: Integer.MAX_VALUE }
-                val info = getK8sObject(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
+                val bestServer =
+                    lobbyServers.minBy { queueService.getServer(it.name)?.games?.size ?: Integer.MAX_VALUE }
+                val info = getK8sObject(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder()
+                    .setFound(false).build()
 
-                val stub = k8sServiceDiscovery.getStubToServer(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
+                val stub = k8sServiceDiscovery.getStubToServer(bestServer.name)
+                    ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
                 val response = stub.createInstance(
                     GsClient.CreateInstanceRequest.newBuilder()
                         .setGame(Env.LOBBY_GAME_NAME)
@@ -408,7 +415,7 @@ class GameServerManager @Inject constructor(
             }
     }
 
-    private fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
+    private suspend fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
         logger.info(
             "Game created: ${request.serverName}/${request.instanceUuid} " +
                     "(${request.gameType.name}/${request.gameType.mapId}/${request.gameType.mode})"
@@ -421,7 +428,7 @@ class GameServerManager @Inject constructor(
         )
     }
 
-    private fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
+    private suspend fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
         logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
         queueService.removeGame(request.serverName, request.instanceUuid)
         apiService.sendUpdate("instance", "remove", request.instanceUuid, null)

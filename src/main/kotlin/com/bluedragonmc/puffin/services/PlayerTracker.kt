@@ -22,19 +22,22 @@ interface IPlayerTracker {
     fun removePlayer(uuid: UUID): PlayerTracker.PlayerState?
     fun setProxy(player: UUID, proxyPodName: String?)
     fun setServer(player: UUID, gameServerName: String?)
-    fun setGameId(player: UUID, gameId: String?)
+    suspend fun setGameId(player: UUID, gameId: String?)
     fun updateGameServerPlayers(serverName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
-    fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance)
+    suspend fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance)
     fun updateProxyPlayers(proxyPodName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
-    fun getPlayerCount(gameType: CommonTypes.GameType?): Int
+    suspend fun getPlayerCount(gameType: CommonTypes.GameType?): Int
     fun getChannelToPlayer(player: UUID): ManagedChannel?
     fun getStubToPlayer(player: UUID): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
 
     suspend fun sendChat(player: UUID, message: String, chatType: ChatType = ChatType.CHAT)
     fun sendChatAsync(player: UUID, message: String, chatType: ChatType = ChatType.CHAT): Job
+    fun sendChatAsync(player: UUID, chatType: ChatType = ChatType.CHAT, message: suspend () -> String): Job
 
     suspend fun sendChat(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT)
     fun sendChatAsync(players: Collection<UUID>, message: String, chatType: ChatType = ChatType.CHAT): Job
+    fun sendChatAsync(players: Collection<UUID>, chatType: ChatType = ChatType.CHAT, message: suspend () -> String): Job
+
     fun registerInstanceChangeCallback(cb: (player: UUID, serverName: String, gameId: String) -> Unit)
     fun registerLogoutCallback(cb: (player: UUID) -> Unit)
     val playerTrackerService: PlayerTracker.PlayerTrackerService
@@ -64,8 +67,8 @@ class PlayerTracker @Inject constructor(
         .map { it.key }
 
     override fun getPlayersOnProxy(podName: String) = players
-            .filter { (_, state) -> state.proxyPodName == podName }
-            .map { it.key }
+        .filter { (_, state) -> state.proxyPodName == podName }
+        .map { it.key }
 
     override fun getPlayersInGameServer(serverName: String) = players
         .filter { (_, state) -> state.gameServerName == serverName }
@@ -89,7 +92,7 @@ class PlayerTracker @Inject constructor(
         )
     }
 
-    override fun setGameId(player: UUID, gameId: String?) {
+    override suspend fun setGameId(player: UUID, gameId: String?) {
         val old = players[player]?.gameId
         players[player] = players[player]?.copy(gameId = gameId) ?: PlayerState(
             null,
@@ -118,7 +121,7 @@ class PlayerTracker @Inject constructor(
         }
     }
 
-    override fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance) {
+    override suspend fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance) {
         val existingPlayers = getPlayersInInstance(gameId)
         val newPlayers = response.playerUuidsList.map(UUID::fromString)
         for (player in existingPlayers) {
@@ -147,7 +150,7 @@ class PlayerTracker @Inject constructor(
         }
     }
 
-    override fun getPlayerCount(gameType: CommonTypes.GameType?): Int {
+    override suspend fun getPlayerCount(gameType: CommonTypes.GameType?): Int {
         return if (gameType == null) {
             players.size
         } else {
@@ -158,7 +161,7 @@ class PlayerTracker @Inject constructor(
         }
     }
 
-    fun cleanup() {
+    suspend fun cleanup() {
         players.entries.removeIf { (_, player) ->
             player.gameId == null && player.gameServerName == null && player.proxyPodName == null
         }
@@ -207,6 +210,10 @@ class PlayerTracker @Inject constructor(
         sendChat(player, message, chatType)
     }
 
+    override fun sendChatAsync(player: UUID, chatType: ChatType, message: suspend () -> String) = Puffin.IO.launch {
+        sendChat(player, message(), chatType)
+    }
+
     override suspend fun sendChat(players: Collection<UUID>, message: String, chatType: ChatType) {
         for (player in players) sendChat(player, message, chatType)
     }
@@ -216,8 +223,15 @@ class PlayerTracker @Inject constructor(
             sendChat(players, message, chatType)
         }
 
+    override fun sendChatAsync(players: Collection<UUID>, chatType: ChatType, message: suspend () -> String) =
+        Puffin.IO.launch {
+            sendChat(players, message(), chatType)
+        }
+
     init {
-        Utils.catchingTimer("PlayerTracker cleanup", true, 10_000.toLong(), 10_000.toLong()) { cleanup() }
+        Utils.catchingTimer("PlayerTracker cleanup", true, 10_000.toLong(), 10_000.toLong()) {
+            Puffin.IO.launch { cleanup() }
+        }
     }
 
     private val instanceChangeCallbacks = mutableListOf<(player: UUID, serverName: String, gameId: String) -> Unit>()

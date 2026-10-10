@@ -1,6 +1,7 @@
 package com.bluedragonmc.puffin.dashboard
 
 import com.bluedragonmc.puffin.app.Env
+import com.bluedragonmc.puffin.app.Puffin
 import com.bluedragonmc.puffin.services.*
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.github.fge.jsonpatch.diff.JsonDiff
@@ -10,6 +11,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.inject.Inject
 import com.google.inject.Singleton
+import kotlinx.coroutines.launch
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
@@ -22,9 +24,9 @@ interface IApiService {
     fun registerCallbacks()
     fun sendUpdate(resource: String, action: String, id: String, updated: JsonElement?)
     fun sendMerge(resource: String, action: String, id: String, old: JsonObject, new: JsonObject)
-    fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject
-    fun createJsonObjectForGame(gameId: String): JsonObject
-    fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject
+    suspend fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject
+    suspend fun createJsonObjectForGame(gameId: String): JsonObject
+    suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject
 }
 
 @Singleton
@@ -50,55 +52,57 @@ class ApiService @Inject constructor(
         }
 
         override fun onMessage(conn: WebSocket, message: String) {
-            val decoded = gson.fromJson(message, JsonObject::class.java)
-            when (decoded.get("request").asString) {
-                "getGameServers" -> {
-                    val gameServers = queueService.getServers().mapNotNull { gs ->
-                        gameServerManager.getK8sObject(gs.name)?.let { createJsonObjectForGameServer(it) }
-                    }
-                    val arr = JsonArray().apply {
-                        gameServers.forEach { add(it) }
-                    }
-                    val response = JsonObject().apply {
-                        addProperty("type", "gameServers")
-                        add("gameServers", arr)
-                    }
-                    conn.send(response.toString())
-                }
-
-                "getInstances" -> conn.send(JsonObject().apply {
-                    addProperty("type", "instances")
-                    add("instances", JsonArray().apply {
-                        queueService.getGames().forEach { game ->
-                            add(createJsonObjectForGame(game.id))
+            Puffin.IO.launch {
+                val decoded = gson.fromJson(message, JsonObject::class.java)
+                when (decoded.get("request").asString) {
+                    "getGameServers" -> {
+                        val gameServers = queueService.getServers().mapNotNull { gs ->
+                            gameServerManager.getK8sObject(gs.name)?.let { createJsonObjectForGameServer(it) }
                         }
-                    })
-                }.toString())
+                        val arr = JsonArray().apply {
+                            gameServers.forEach { add(it) }
+                        }
+                        val response = JsonObject().apply {
+                            addProperty("type", "gameServers")
+                            add("gameServers", arr)
+                        }
+                        conn.send(response.toString())
+                    }
 
-                "getInstance" -> conn.send(
-                    createJsonObjectForGame(decoded.get("instance").asString).toString()
-                )
-
-                "getParties" -> {
-                    conn.send(JsonObject().apply {
-                        addProperty("type", "parties")
-                        add("parties", JsonArray().apply {
-                            partyManager.getParties().forEach { party ->
-                                add(createJsonObjectForParty(party))
+                    "getInstances" -> conn.send(JsonObject().apply {
+                        addProperty("type", "instances")
+                        add("instances", JsonArray().apply {
+                            queueService.getGames().forEach { game ->
+                                add(createJsonObjectForGame(game.id))
                             }
                         })
                     }.toString())
-                }
 
-                "getPlayers" -> {
-                    conn.send(JsonObject().apply {
-                        addProperty("type", "players")
-                        add("players", JsonArray().apply {
-                            playerTracker.getPlayers().forEach { (uuid, state) ->
-                                add(createJsonObjectForPlayer(uuid, state))
-                            }
-                        })
-                    }.toString())
+                    "getInstance" -> conn.send(
+                        createJsonObjectForGame(decoded.get("instance").asString).toString()
+                    )
+
+                    "getParties" -> {
+                        conn.send(JsonObject().apply {
+                            addProperty("type", "parties")
+                            add("parties", JsonArray().apply {
+                                partyManager.getParties().forEach { party ->
+                                    add(createJsonObjectForParty(party))
+                                }
+                            })
+                        }.toString())
+                    }
+
+                    "getPlayers" -> {
+                        conn.send(JsonObject().apply {
+                            addProperty("type", "players")
+                            add("players", JsonArray().apply {
+                                playerTracker.getPlayers().forEach { (uuid, state) ->
+                                    add(createJsonObjectForPlayer(uuid, state))
+                                }
+                            })
+                        }.toString())
+                    }
                 }
             }
         }
@@ -122,15 +126,15 @@ class ApiService @Inject constructor(
 
     override fun registerCallbacks() {
         playerTracker.registerInstanceChangeCallback { player, serverName, gameId ->
-            sendUpdate(
-                "player",
-                "update",
-                player.toString(),
-                createJsonObjectForPlayer(
-                    player,
-                    playerTracker.getPlayer(player) ?: return@registerInstanceChangeCallback
+            Puffin.IO.launch {
+                val state = playerTracker.getPlayer(player) ?: return@launch
+                sendUpdate(
+                    "player",
+                    "update",
+                    player.toString(),
+                    createJsonObjectForPlayer(player, state)
                 )
-            )
+            }
         }
 
         playerTracker.registerLogoutCallback { uuid ->
@@ -138,10 +142,12 @@ class ApiService @Inject constructor(
         }
 
         queueService.registerInstanceUpdateCallback { gameId ->
-            sendUpdate(
-                "instance", "update", gameId,
-                createJsonObjectForGame(gameId)
-            )
+            Puffin.IO.launch {
+                sendUpdate(
+                    "instance", "update", gameId,
+                    createJsonObjectForGame(gameId)
+                )
+            }
         }
 
         partyManager.registerPartyUpdateCallback { action, id, updated ->
@@ -173,7 +179,7 @@ class ApiService @Inject constructor(
         sendUpdate(resource, action, id, json)
     }
 
-    override fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject {
+    override suspend fun createJsonObjectForGameServer(gs: GameServerManager.GameServer): JsonObject {
         return JsonObject().apply {
             if (gs is GameServerManager.AgonesGameServer) {
                 add("raw", gs.`object`.raw)
@@ -189,7 +195,7 @@ class ApiService @Inject constructor(
         }
     }
 
-    override fun createJsonObjectForGame(gameId: String): JsonObject {
+    override suspend fun createJsonObjectForGame(gameId: String): JsonObject {
         val game = queueService.getGame(gameId)
         return JsonObject().apply {
             addProperty("type", "instance")
@@ -211,7 +217,7 @@ class ApiService @Inject constructor(
         }
     }
 
-    override fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject {
+    override suspend fun createJsonObjectForPlayer(uuid: UUID, state: PlayerTracker.PlayerState): JsonObject {
         return JsonObject().apply {
             addProperty("uuid", uuid.toString())
             addProperty("username", databaseConnection.getPlayerName(uuid))

@@ -50,14 +50,14 @@ internal fun placementCandidates(servers: List<QueueService.GameServer>): List<Q
     servers.filter { !it.draining }.ifEmpty { servers }
 
 interface IQueueService {
-    fun getServers(): List<QueueService.GameServer>
-    fun getServer(serverName: String): QueueService.GameServer?
-    fun getGame(gameId: String): QueueService.Game?
-    fun getServerOfGame(gameId: String): String?
+    suspend fun getServers(): List<QueueService.GameServer>
+    suspend fun getServer(serverName: String): QueueService.GameServer?
+    suspend fun getGame(gameId: String): QueueService.Game?
+    suspend fun getServerOfGame(gameId: String): String?
     fun registerInstanceUpdateCallback(cb: (gameId: String) -> Unit)
-    fun setGameState(gameId: String, newState: CommonTypes.GameState)
+    suspend fun setGameState(gameId: String, newState: CommonTypes.GameState)
     fun addToQueue(party: QueueService.QueuedParty)
-    fun removeFromQueue(player: UUID): Boolean
+    suspend fun removeFromQueue(player: UUID): Boolean
 
     suspend fun processQueue()
     suspend fun getBestAvailableInstance(
@@ -66,13 +66,13 @@ interface IQueueService {
         partySize: Int
     ): QueueService.Game?
 
-    fun removeServer(name: String)
-    fun addServer(name: String)
-    fun setServerDraining(name: String, draining: Boolean)
-    fun removeGame(serverName: String, gameId: String)
-    fun getGamesMatching(gameType: CommonTypes.GameType): List<QueueService.Game>
-    fun addGame(serverName: String, gameId: String, gameType: CommonTypes.GameType, gameState: CommonTypes.GameState)
-    fun getGames(): List<QueueService.Game>
+    suspend fun removeServer(name: String)
+    suspend fun addServer(name: String)
+    suspend fun setServerDraining(name: String, draining: Boolean)
+    suspend fun removeGame(serverName: String, gameId: String)
+    suspend fun getGamesMatching(gameType: CommonTypes.GameType): List<QueueService.Game>
+    suspend fun addGame(serverName: String, gameId: String, gameType: CommonTypes.GameType, gameState: CommonTypes.GameState)
+    suspend fun getGames(): List<QueueService.Game>
     fun setDestination(player: UUID, gameId: String)
 
     suspend fun sendPlayerToInstance(player: UUID, gameId: String)
@@ -113,36 +113,30 @@ class QueueService @Inject constructor(
                 block(queuedParties)
             }
 
-        fun <R> withPartiesBlocking(block: suspend (MutableSet<QueuedParty>) -> R): R =
-            runBlocking { withParties(block) }
-
         suspend inline fun <R> withServers(block: suspend (MutableList<GameServer>) -> R): R = serversMutex.withLock {
             block(servers)
         }
-
-        fun <R> withServersBlocking(block: suspend (MutableList<GameServer>) -> R): R =
-            runBlocking { withServers(block) }
     }
 
     private val data = Data()
 
-    override fun getServers(): List<GameServer> = data.withServersBlocking { servers -> ArrayList(servers) }
-    override fun getServer(serverName: String) =
-        data.withServersBlocking { servers -> servers.find { it.name == serverName } }
+    override suspend fun getServers(): List<GameServer> = data.withServers { servers -> ArrayList(servers) }
+    override suspend fun getServer(serverName: String) =
+        data.withServers { servers -> servers.find { it.name == serverName } }
 
-    override fun getGame(gameId: String): Game? = data.withServersBlocking { servers ->
+    override suspend fun getGame(gameId: String): Game? = data.withServers { servers ->
         for (server in servers) {
             for (game in server.games) {
-                if (game.id == gameId) return@withServersBlocking game
+                if (game.id == gameId) return@withServers game
             }
         }
         null
     }
 
-    override fun getServerOfGame(gameId: String): String? = data.withServersBlocking { servers ->
+    override suspend fun getServerOfGame(gameId: String): String? = data.withServers { servers ->
         for (server in servers) {
             for (game in server.games) {
-                if (game.id == gameId) return@withServersBlocking server.name
+                if (game.id == gameId) return@withServers server.name
             }
         }
         null
@@ -154,10 +148,10 @@ class QueueService @Inject constructor(
         instanceUpdateCallbacks.add(cb)
     }
 
-    override fun setGameState(gameId: String, newState: CommonTypes.GameState) {
+    override suspend fun setGameState(gameId: String, newState: CommonTypes.GameState) {
         var old: Game? = null
         var new: Game? = null
-        data.withServersBlocking { servers ->
+        data.withServers { servers ->
             outer@ for ((i, server) in servers.withIndex()) {
                 for (game in server.games) {
                     if (game.id == gameId) {
@@ -220,8 +214,8 @@ class QueueService @Inject constructor(
         }
     }
 
-    override fun removeFromQueue(player: UUID) =
-        data.withPartiesBlocking { queuedParties -> queuedParties.removeIf { player in it.players } }
+    override suspend fun removeFromQueue(player: UUID) =
+        data.withParties { queuedParties -> queuedParties.removeIf { player in it.players } }
 
     private suspend fun removeAllParties(shouldRemove: suspend (QueuedParty) -> Boolean) {
         val collection = data.withParties { parties -> ArrayList(parties) }
@@ -428,15 +422,15 @@ class QueueService @Inject constructor(
     private infix fun CommonTypes.GameType.matches(other: CommonTypes.GameType) =
         name == other.name && (!other.hasMode() || mode == other.mode) && (!other.hasMapId() || mapId == other.mapId)
 
-    override fun removeServer(name: String) {
-        data.withServersBlocking { servers ->
+    override suspend fun removeServer(name: String) {
+        data.withServers { servers ->
             servers.removeIf { it.name == name }
         }
         Puffin.IO.launch { processQueue() }
     }
 
-    override fun addServer(name: String) {
-        data.withServersBlocking { servers ->
+    override suspend fun addServer(name: String) {
+        data.withServers { servers ->
             if (servers.none { it.name == name }) {
                 servers.add(GameServer(name, emptyList()))
             }
@@ -444,8 +438,8 @@ class QueueService @Inject constructor(
         Puffin.IO.launch { processQueue() }
     }
 
-    override fun setServerDraining(name: String, draining: Boolean) {
-        data.withServersBlocking { servers ->
+    override suspend fun setServerDraining(name: String, draining: Boolean) {
+        data.withServers { servers ->
             for ((i, server) in servers.withIndex()) {
                 if (server.name == name && server.draining != draining) {
                     servers[i] = server.copy(draining = draining)
@@ -454,8 +448,8 @@ class QueueService @Inject constructor(
         }
     }
 
-    override fun removeGame(serverName: String, gameId: String) {
-        data.withServersBlocking { servers ->
+    override suspend fun removeGame(serverName: String, gameId: String) {
+        data.withServers { servers ->
             for ((i, server) in servers.withIndex()) {
                 if (server.name == serverName) {
                     servers[i] = server.copy(games = server.games.filter { it.id != gameId })
@@ -465,16 +459,16 @@ class QueueService @Inject constructor(
         Puffin.IO.launch { processQueue() }
     }
 
-    override fun getGamesMatching(gameType: CommonTypes.GameType) =
-        data.withServersBlocking { servers -> servers.flatMap { it.games.filter { game -> game.gameType matches gameType } } }
+    override suspend fun getGamesMatching(gameType: CommonTypes.GameType) =
+        data.withServers { servers -> servers.flatMap { it.games.filter { game -> game.gameType matches gameType } } }
 
-    override fun addGame(
+    override suspend fun addGame(
         serverName: String,
         gameId: String,
         gameType: CommonTypes.GameType,
         gameState: CommonTypes.GameState
     ) {
-        data.withServersBlocking { servers ->
+        data.withServers { servers ->
             for ((i, server) in servers.withIndex()) {
                 if (server.name == serverName) {
                     val newList = server.games.toMutableList()
@@ -494,7 +488,7 @@ class QueueService @Inject constructor(
         Puffin.IO.launch { processQueue() }
     }
 
-    override fun getGames() = data.withServersBlocking { servers -> servers.flatMap { it.games } }
+    override suspend fun getGames() = data.withServers { servers -> servers.flatMap { it.games } }
 
     override val gameStateService by lazy { GameStateService() }
 
