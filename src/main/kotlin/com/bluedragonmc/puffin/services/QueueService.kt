@@ -66,18 +66,13 @@ interface IQueueService {
     ): QueueService.Game?
 
     suspend fun removeServer(name: String)
-    suspend fun addServer(name: String)
+    suspend fun addServer(name: String, address: String?, port: Int?)
     suspend fun setServerDraining(name: String, draining: Boolean)
     suspend fun removeGame(serverName: String, gameId: String)
     suspend fun getGamesMatching(gameType: CommonTypes.GameType): List<QueueService.Game>
     suspend fun addGame(serverName: String, gameId: String, gameType: CommonTypes.GameType, gameState: CommonTypes.GameState)
     suspend fun getGames(): List<QueueService.Game>
     fun setDestination(player: UUID, gameId: String)
-
-    /**
-     * Registers the lookup used by the queue to resolve a game server's address and port.
-     */
-    fun registerGameServerLookup(lookup: suspend (serverName: String) -> GameServerManager.GameServer?)
 
     suspend fun sendPlayerToInstance(player: UUID, gameId: String)
     fun consumeDestination(player: UUID): String?
@@ -121,13 +116,6 @@ class QueueService @Inject constructor(
     }
 
     private val data = Data()
-
-    /** Resolves a game server by name, or `null` if unknown. Registered by [GameServerManager]. */
-    private var gameServerLookup: suspend (String) -> GameServerManager.GameServer? = { null }
-
-    override fun registerGameServerLookup(lookup: suspend (serverName: String) -> GameServerManager.GameServer?) {
-        gameServerLookup = lookup
-    }
 
     init {
         playerTracker.registerGameIdChangeCallback { removeFromQueue(it) }
@@ -417,7 +405,11 @@ class QueueService @Inject constructor(
     }
 
     data class GameServer(
-        val name: String, val games: List<Game>, val draining: Boolean = false
+        val name: String,
+        val games: List<Game>,
+        val address: String? = null,
+        val port: Int? = null,
+        val draining: Boolean = false,
     )
 
     data class Game(
@@ -457,10 +449,16 @@ class QueueService @Inject constructor(
         applicationScope.launch { processQueue() }
     }
 
-    override suspend fun addServer(name: String) {
+    override suspend fun addServer(name: String, address: String?, port: Int?) {
         data.withServers { servers ->
-            if (servers.none { it.name == name }) {
-                servers.add(GameServer(name, emptyList()))
+            val index = servers.indexOfFirst { it.name == name }
+            if (index == -1) {
+                servers.add(GameServer(name, emptyList(), address = address, port = port))
+            } else {
+                // A server may be discovered before its address/port are known (or vice versa);
+                // keep whichever values we have.
+                val old = servers[index]
+                servers[index] = old.copy(address = address ?: old.address, port = port ?: old.port)
             }
         }
         applicationScope.launch { processQueue() }
@@ -551,11 +549,14 @@ class QueueService @Inject constructor(
             return
         }
 
-        val gameServerObj = gameServerLookup(serverName) ?: run {
+        val server = getServer(serverName)
+        val address = server?.address
+        val port = server?.port
+        if (address == null) {
             logger.warn("No IP/Port was found for server name $serverName! Sending players to this server may not be possible.")
             return
         }
-        if (gameServerObj.port == null) {
+        if (port == null) {
             logger.warn("Game server with name $serverName was found, but it has no port! Sending players to this server may not be possible.")
             return
         }
@@ -563,8 +564,8 @@ class QueueService @Inject constructor(
         stub.sendPlayer(sendPlayerRequest {
             this.playerUuid = player.toString()
             this.serverName = serverName
-            this.gameServerIp = gameServerObj.address
-            this.gameServerPort = gameServerObj.port!!
+            this.gameServerIp = address
+            this.gameServerPort = port
             this.instanceId = gameId
         })
     }

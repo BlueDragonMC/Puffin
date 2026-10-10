@@ -28,7 +28,7 @@ class InstanceGrpcService @Inject constructor(
     override suspend fun initGameServer(request: ServerTracking.InitGameServerRequest): Empty = handleRPC {
         // Called when a new game server starts up and sends a ping
         logger.info("New game server started and pinged: ${request.serverName}")
-        queueService.addServer(request.serverName)
+        queueService.addServer(request.serverName, null, null)
         return Empty.getDefaultInstance()
     }
 

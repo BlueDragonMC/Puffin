@@ -1,6 +1,9 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.api.grpc.*
+import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
+import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
+import com.bluedragonmc.api.grpc.ServerTracking
+import com.bluedragonmc.api.grpc.instanceCreatedRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
@@ -53,7 +56,6 @@ class GameServerManager @Inject constructor(
     val playerTracker: IPlayerTracker,
     val queueService: IQueueService,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
-    val mapsService: MapService,
     val versionResolver: ServerVersionResolver,
     val applicationScope: ApplicationScope
 ) : Service(), IGameServerManager {
@@ -82,9 +84,6 @@ class GameServerManager @Inject constructor(
     }
 
     init {
-        // Let the queue resolve game server addresses without depending on GameServerManager directly.
-        queueService.registerGameServerLookup { getK8sObject(it) }
-
         if (!DEV_MODE) {
 
             applicationScope.launch {
@@ -210,7 +209,7 @@ class GameServerManager @Inject constructor(
     private suspend fun processServerAdded(`object`: DynamicKubernetesObject) {
         val gs = AgonesGameServer(`object`)
         logger.info("New GameServer found: ${gs.name} (${gs.address}:${gs.port})")
-        queueService.addServer(gs.name)
+        queueService.addServer(gs.name, gs.address, gs.port)
 
         // Get all running instances on this newly-added server
         applicationScope.launch {
