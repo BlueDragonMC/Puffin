@@ -45,6 +45,9 @@ class PartyManager @Inject constructor(
     init {
         // React to logouts through PlayerTracker's callback rather than depending on it directly.
         playerTracker.registerLogoutCallback { onLogout(it) }
+
+        // Let the queue resolve party membership without depending on PartyManager directly.
+        queueService.registerPartyLookup { partyOf(it) }
     }
 
     override fun getParties() = synchronized(partyLock) { parties.toSet() }

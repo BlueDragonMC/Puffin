@@ -77,6 +77,11 @@ interface IQueueService {
     suspend fun getGames(): List<QueueService.Game>
     fun setDestination(player: UUID, gameId: String)
 
+    /**
+     * Registers the lookup used by the queue handlers to resolve a player's party.
+     */
+    fun registerPartyLookup(lookup: (UUID) -> PartyManager.Party?)
+
     suspend fun sendPlayerToInstance(player: UUID, gameId: String)
     val queueService: QueueService.QueueService
     val gameStateService: QueueService.GameStateService
@@ -85,7 +90,6 @@ interface IQueueService {
 @Singleton
 class QueueService @Inject constructor(
     val mapService: MapService,
-    val partyManager: IPartyManager,
     val playerTracker: IPlayerTracker,
     val k8sServiceDiscovery: IK8sServiceDiscovery,
     val gameServerManager: IGameServerManager,
@@ -122,6 +126,13 @@ class QueueService @Inject constructor(
     }
 
     private val data = Data()
+
+    /** Resolves a player's party, or `null` if they aren't in one. Registered by [PartyManager]. */
+    private var partyLookup: (UUID) -> PartyManager.Party? = { null }
+
+    override fun registerPartyLookup(lookup: (UUID) -> PartyManager.Party?) {
+        partyLookup = lookup
+    }
 
     init {
         playerTracker.registerGameIdChangeCallback { removeFromQueue(it) }
@@ -571,7 +582,7 @@ class QueueService @Inject constructor(
     inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
         override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty = handleRPC {
             val playerUuid = UUID.fromString(request.playerUuid)
-            val party = partyManager.partyOf(playerUuid)
+            val party = partyLookup(playerUuid)
             val isLobby = request.gameType.name == Env.LOBBY_GAME_NAME
             if (party != null && party.leader != playerUuid && !isLobby) {
                 playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
@@ -592,7 +603,7 @@ class QueueService @Inject constructor(
         override suspend fun bulkAddToQueue(request: Queue.BulkAddToQueueRequest): Empty {
             for (request in request.requestsList) {
                 val uuid = UUID.fromString(request.playerUuid)
-                val party = partyManager.partyOf(uuid)
+                val party = partyLookup(uuid)
                 if (party == null || party.leader == uuid || request.gameType.name == Env.LOBBY_GAME_NAME) {
                     addToQueue(request)
                 }
@@ -615,7 +626,7 @@ class QueueService @Inject constructor(
 
         override suspend fun removeFromQueue(request: Queue.RemoveFromQueueRequest): Empty = handleRPC {
             val playerUuid = UUID.fromString(request.playerUuid)
-            val party = partyManager.partyOf(playerUuid)
+            val party = partyLookup(playerUuid)
             if (party != null && party.leader != playerUuid) {
                 playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
                 return@handleRPC Empty.getDefaultInstance()
