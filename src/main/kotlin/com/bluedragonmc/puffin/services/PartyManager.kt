@@ -355,6 +355,7 @@ class PartyManager @Inject constructor(
                 return partyListResponse {
                     players += party.getMembers().map {
                         playerEntry {
+                            this.uuid = it.toString()
                             username = it.name()
                             role = if (party.leader == it) "Leader" else "Member"
                         }
