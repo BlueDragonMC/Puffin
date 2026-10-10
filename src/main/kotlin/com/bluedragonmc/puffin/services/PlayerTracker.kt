@@ -1,12 +1,13 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.api.grpc.*
+import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.api.grpc.GsClient.SendChatRequest.ChatType
+import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
+import com.bluedragonmc.api.grpc.PlayerHolderOuterClass
+import com.bluedragonmc.api.grpc.sendChatRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
-import com.google.protobuf.Empty
 import io.grpc.ManagedChannel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -22,6 +23,8 @@ interface IPlayerTracker {
     fun setProxy(player: UUID, proxyPodName: String?)
     fun setServer(player: UUID, gameServerName: String?)
     suspend fun setGameId(player: UUID, gameId: String?)
+    fun handleLogout(uuid: UUID): PlayerTracker.PlayerState?
+    suspend fun handleInstanceChange(uuid: UUID, serverName: String, gameId: String)
     fun updateGameServerPlayers(serverName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
     suspend fun updateGamePlayers(gameId: String, response: GsClient.GetInstancesResponse.RunningInstance)
     fun updateProxyPlayers(proxyPodName: String, response: PlayerHolderOuterClass.GetPlayersResponse)
@@ -41,7 +44,6 @@ interface IPlayerTracker {
     fun registerInstanceChangeCallback(cb: (player: UUID, serverName: String, gameId: String) -> Unit)
     fun registerLogoutCallback(cb: (player: UUID) -> Unit)
     fun registerGameIdChangeCallback(cb: suspend (player: UUID) -> Unit)
-    val playerTrackerService: PlayerTracker.PlayerTrackerService
 }
 
 /**
@@ -264,87 +266,15 @@ class PlayerTracker @Inject constructor(
         gameIdChangeCallbacks.add(cb)
     }
 
-    override val playerTrackerService by lazy { PlayerTrackerService() }
+    override fun handleLogout(uuid: UUID): PlayerState? {
+        val oldState = removePlayer(uuid)
+        logoutCallbacks.forEach { it(uuid) }
+        return oldState
+    }
 
-    inner class PlayerTrackerService : PlayerTrackerGrpcKt.PlayerTrackerCoroutineImplBase() {
-        override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty = handleRPC {
-            // Called when a player logs into a proxy.
-            logger.info("Login > ${request.username} (${request.uuid})")
-            setProxy(UUID.fromString(request.uuid), request.proxyPodName)
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun playerLogout(request: PlayerTrackerOuterClass.PlayerLogoutRequest): Empty = handleRPC {
-            // Called when a player logs out of or otherwise disconnects from a proxy.
-            val uuid = UUID.fromString(request.uuid)
-            val oldState = removePlayer(uuid)
-            logger.info("Logout > ${request.username} $oldState")
-            logoutCallbacks.forEach { it(uuid) }
-            databaseConnection.evictCachesForPlayer(uuid)
-
-            if (oldState?.gameId == null)
-                logger.warn("Player logged out without a recorded instance: uuid=$uuid")
-
-            if (oldState?.proxyPodName == null)
-                logger.warn("Player logged out without a recorded proxy server: uuid=$uuid")
-
-            if (oldState?.gameServerName == null)
-                logger.warn("Player logged out without a recorded game server: uuid=$uuid")
-
-
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun playerInstanceChange(request: PlayerTrackerOuterClass.PlayerInstanceChangeRequest): Empty =
-            handleRPC {
-                // Called when a player changes instances on the same backend server.
-                val uuid = UUID.fromString(request.uuid)
-                setGameId(uuid, request.instanceId)
-                setServer(uuid, request.serverName)
-                logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
-                instanceChangeCallbacks.forEach { it(uuid, request.serverName, request.instanceId) }
-                return Empty.getDefaultInstance()
-            }
-
-        override suspend fun playerTransfer(request: PlayerTrackerOuterClass.PlayerTransferRequest): Empty = handleRPC {
-            // Called when a player changes backend servers (including initial routing).
-            val uuid = UUID.fromString(request.uuid)
-            setGameId(uuid, request.newInstance)
-            setServer(uuid, request.newServerName)
-            logger.info("Player Transfer > Player ${request.uuid} switched to instance ${request.newServerName}/${request.newInstance}")
-            instanceChangeCallbacks.forEach { it(uuid, request.newServerName, request.newInstance) }
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun queryPlayer(request: PlayerTrackerOuterClass.PlayerQueryRequest): PlayerTrackerOuterClass.QueryPlayerResponse =
-            handleRPC {
-                when (request.identityCase) {
-                    PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.USERNAME -> {
-                        return queryPlayerResponse {
-                            username = request.username
-                            val foundUuid = databaseConnection.getPlayerUUID(username)
-                            foundUuid?.let {
-                                uuid = it.toString()
-                                isOnline = getPlayer(it) != null
-                            }
-                        }
-                    }
-
-                    PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.UUID -> {
-                        val uuidIn = UUID.fromString(request.uuid)
-                        return queryPlayerResponse {
-                            uuid = request.uuid
-                            isOnline = getPlayer(uuidIn) != null
-                            val foundUsername = databaseConnection.getPlayerName(uuidIn)
-                            foundUsername?.let {
-                                username = it
-                            }
-                        }
-                    }
-
-                    PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.IDENTITY_NOT_SET -> error("No identity given!")
-                    null -> error("No identity given!")
-                }
-            }
+    override suspend fun handleInstanceChange(uuid: UUID, serverName: String, gameId: String) {
+        setGameId(uuid, gameId)
+        setServer(uuid, serverName)
+        instanceChangeCallbacks.forEach { it(uuid, serverName, gameId) }
     }
 }

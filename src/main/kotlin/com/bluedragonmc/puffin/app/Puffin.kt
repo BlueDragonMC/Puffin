@@ -3,6 +3,15 @@ package com.bluedragonmc.puffin.app
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.dashboard.ApiService
 import com.bluedragonmc.puffin.dashboard.IApiService
+import com.bluedragonmc.puffin.grpc.GameStateGrpcService
+import com.bluedragonmc.puffin.grpc.InstanceGrpcService
+import com.bluedragonmc.puffin.grpc.JukeboxGrpcService
+import com.bluedragonmc.puffin.grpc.LobbyGrpcService
+import com.bluedragonmc.puffin.grpc.MapGrpcService
+import com.bluedragonmc.puffin.grpc.PartyGrpcService
+import com.bluedragonmc.puffin.grpc.PlayerTrackerGrpcService
+import com.bluedragonmc.puffin.grpc.QueueGrpcService
+import com.bluedragonmc.puffin.grpc.VelocityMessageGrpcService
 import com.bluedragonmc.puffin.services.*
 import com.google.inject.Guice
 import com.google.inject.Module
@@ -18,7 +27,6 @@ class Puffin {
         binder.bind(IApiService::class.java).to(ApiService::class.java)
         binder.bind(DatabaseConnection::class.java)
         binder.bind(IGameServerManager::class.java).to(GameServerManager::class.java)
-        binder.bind(JukeboxService::class.java)
         binder.bind(IK8sServiceDiscovery::class.java).to(K8sServiceDiscovery::class.java)
         binder.bind(ServerVersionResolver::class.java).to(AgonesFleetVersionResolver::class.java)
         binder.bind(MapService::class.java)
@@ -27,6 +35,17 @@ class Puffin {
         binder.bind(PrivateMessageService::class.java)
         binder.bind(IQueueService::class.java).to(QueueService::class.java)
         binder.bind(GrpcServer::class.java)
+
+        // gRPC adapters
+        binder.bind(MapGrpcService::class.java)
+        binder.bind(LobbyGrpcService::class.java)
+        binder.bind(InstanceGrpcService::class.java)
+        binder.bind(QueueGrpcService::class.java)
+        binder.bind(GameStateGrpcService::class.java)
+        binder.bind(PartyGrpcService::class.java)
+        binder.bind(PlayerTrackerGrpcService::class.java)
+        binder.bind(VelocityMessageGrpcService::class.java)
+        binder.bind(JukeboxGrpcService::class.java)
     }
 
     fun initialize() {

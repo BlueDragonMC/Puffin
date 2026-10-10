@@ -6,7 +6,6 @@ import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.app.Env.DEV_MODE
 import com.bluedragonmc.puffin.app.Env.K8S_NAMESPACE
 import com.bluedragonmc.puffin.util.Utils
-import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -30,8 +29,8 @@ interface IGameServerManager {
 
     fun registerGameServerListener(listener: suspend (GameServerEvent) -> Unit)
 
-    val serviceDiscoveryService: GameServerManager.ServerDiscoveryService
-    val instanceService: GameServerManager.InstanceService
+    suspend fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest)
+    suspend fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest)
 }
 
 /**
@@ -341,96 +340,7 @@ class GameServerManager @Inject constructor(
         kubernetesObjects.map { AgonesGameServer(it) }.find { it.name == serverName }
     }
 
-    override val serviceDiscoveryService by lazy { ServerDiscoveryService() }
-
-    inner class ServerDiscoveryService : LobbyServiceGrpcKt.LobbyServiceCoroutineImplBase() {
-        override suspend fun findLobby(request: ServiceDiscovery.FindLobbyRequest): ServiceDiscovery.FindLobbyResponse =
-            handleRPC {
-                val servers = queueService.getServers().filter { gs ->
-                    (request.includeServerNamesCount == 0 || request.includeServerNamesList.contains(gs.name)) &&
-                            (request.excludeServerNamesCount == 0 || !request.excludeServerNamesList.contains(gs.name))
-                }
-
-                // Prefer servers that are up to date (not draining) if available.
-                val lobbyServers = servers.filter { !it.draining }.ifEmpty { servers }
-
-                for (server in lobbyServers) {
-                    for (game in server.games) {
-                        if (game.gameType.name == Env.LOBBY_GAME_NAME) {
-                            val info = getK8sObject(server.name) ?: continue
-                            return ServiceDiscovery.FindLobbyResponse.newBuilder()
-                                .setFound(true)
-                                .setServerName(server.name)
-                                .setIp(info.address)
-                                .setPort(info.port ?: 25565)
-                                .setInstanceUuid(game.id)
-                                .build()
-                        }
-                    }
-                }
-
-                if (lobbyServers.isEmpty()) {
-                    return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
-                }
-
-                // Start up a lobby if one wasn't found
-                val bestServer =
-                    lobbyServers.minBy { queueService.getServer(it.name)?.games?.size ?: Integer.MAX_VALUE }
-                val info = getK8sObject(bestServer.name) ?: return ServiceDiscovery.FindLobbyResponse.newBuilder()
-                    .setFound(false).build()
-
-                val stub = k8sServiceDiscovery.getStubToServer(bestServer.name)
-                    ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
-                val response = stub.createInstance(
-                    GsClient.CreateInstanceRequest.newBuilder()
-                        .setGame(Env.LOBBY_GAME_NAME)
-                        .setMapSource(mapsService.getAvailableMaps(Env.LOBBY_GAME_NAME, null, null, null).random())
-                        .build()
-                )
-
-                return ServiceDiscovery.FindLobbyResponse.newBuilder()
-                    .setFound(true)
-                    .setServerName(bestServer.name)
-                    .setIp(info.address)
-                    .setPort(info.port ?: 25565)
-                    .setInstanceUuid(response.instanceUuid)
-                    .build()
-            }
-    }
-
-    override val instanceService by lazy { InstanceService() }
-
-    inner class InstanceService : InstanceServiceGrpcKt.InstanceServiceCoroutineImplBase() {
-        override suspend fun initGameServer(request: ServerTracking.InitGameServerRequest): Empty = handleRPC {
-            // Called when a new game server starts up and sends a ping
-            logger.info("New game server started and pinged: ${request.serverName}")
-            queueService.addServer(request.serverName)
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun createInstance(request: ServerTracking.InstanceCreatedRequest): Empty = handleRPC {
-            // Called when an instance is created on a game server
-            handleInstanceCreated(request)
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun removeInstance(request: ServerTracking.InstanceRemovedRequest): Empty = handleRPC {
-            // Called when an instance is removed on a game server
-            handleInstanceRemoved(request)
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun getTotalPlayerCount(request: ServerTracking.PlayerCountRequest): ServerTracking.PlayerCountResponse =
-            handleRPC {
-                return playerCountResponse {
-                    val matchingInstanceIds = request.filterGameTypeOrNull
-                        ?.let { gameType -> queueService.getGamesMatching(gameType).map { it.id } }
-                    totalPlayers = playerTracker.getPlayerCount(matchingInstanceIds)
-                }
-            }
-    }
-
-    private suspend fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
+    override suspend fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
         logger.info(
             "Game created: ${request.serverName}/${request.instanceUuid} " +
                     "(${request.gameType.name}/${request.gameType.mapId}/${request.gameType.mode})"
@@ -440,7 +350,7 @@ class GameServerManager @Inject constructor(
         notifyListeners(GameServerEvent.InstanceAdded(request.instanceUuid))
     }
 
-    private suspend fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
+    override suspend fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
         logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
         queueService.removeGame(request.serverName, request.instanceUuid)
         notifyListeners(GameServerEvent.InstanceRemoved(request.instanceUuid))

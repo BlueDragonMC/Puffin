@@ -1,14 +1,10 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.CommonTypes
-import com.bluedragonmc.api.grpc.Map
-import com.bluedragonmc.api.grpc.MapServiceGrpcKt
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.Env
-import com.bluedragonmc.puffin.util.Utils
 import com.google.inject.Inject
 import com.google.inject.Singleton
-import com.google.protobuf.Empty
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.Dispatchers
@@ -89,24 +85,6 @@ class MapService @Inject constructor(val db: DatabaseConnection, val application
         val filteredDbMaps = db.getAvailableMaps(gameName, mode, mapId, whitelistedPlayers)
         val filteredAnvilFileMaps = filterAnvilMaps(gameName, mode, mapId, whitelistedPlayers).map { it.mapSource }
         return filteredAnvilFileMaps + filteredDbMaps
-    }
-
-    inner class MapService : MapServiceGrpcKt.MapServiceCoroutineImplBase() {
-        override suspend fun getAvailableMaps(request: Map.GetAvailableMapsRequest): Map.MapList = Utils.handleRPC {
-            return Map.MapList.newBuilder().addAllMaps(
-                getAvailableMaps(
-                    gameName = if (request.hasGameName()) request.gameName else null,
-                    mode = if (request.hasGameMode()) request.gameMode else null,
-                    mapId = null,
-                    if (request.hasWhitelist()) request.whitelist.playersList.map { UUID.fromString(it) } else null,
-                )
-            ).build()
-        }
-
-        override suspend fun updateMapConfig(request: Map.UpdateMapConfigRequest): Empty {
-            db.putMapConfig(request.mapId, request.configJson)
-            return Empty.getDefaultInstance()
-        }
     }
 
     init {

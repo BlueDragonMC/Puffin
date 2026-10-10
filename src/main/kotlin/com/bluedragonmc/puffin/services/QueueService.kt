@@ -1,18 +1,15 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.api.grpc.*
+import com.bluedragonmc.api.grpc.CommonTypes
 import com.bluedragonmc.api.grpc.CommonTypes.EnumGameState
-import com.bluedragonmc.api.grpc.Queue
-import com.bluedragonmc.api.grpc.Queue.GetDestinationRequest
-import com.bluedragonmc.api.grpc.Queue.GetDestinationResponse
+import com.bluedragonmc.api.grpc.GsClient
+import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
+import com.bluedragonmc.api.grpc.sendPlayerRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
-import com.bluedragonmc.puffin.app.Env
 import com.bluedragonmc.puffin.util.Utils
-import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
-import com.google.protobuf.Empty
 import io.grpc.Deadline
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
@@ -78,18 +75,12 @@ interface IQueueService {
     fun setDestination(player: UUID, gameId: String)
 
     /**
-     * Registers the lookup used by the queue handlers to resolve a player's party.
-     */
-    fun registerPartyLookup(lookup: (UUID) -> PartyManager.Party?)
-
-    /**
      * Registers the lookup used by the queue to resolve a game server's address and port.
      */
     fun registerGameServerLookup(lookup: suspend (serverName: String) -> GameServerManager.GameServer?)
 
     suspend fun sendPlayerToInstance(player: UUID, gameId: String)
-    val queueService: QueueService.QueueService
-    val gameStateService: QueueService.GameStateService
+    fun consumeDestination(player: UUID): String?
 }
 
 @Singleton
@@ -130,13 +121,6 @@ class QueueService @Inject constructor(
     }
 
     private val data = Data()
-
-    /** Resolves a player's party, or `null` if they aren't in one. Registered by [PartyManager]. */
-    private var partyLookup: (UUID) -> PartyManager.Party? = { null }
-
-    override fun registerPartyLookup(lookup: (UUID) -> PartyManager.Party?) {
-        partyLookup = lookup
-    }
 
     /** Resolves a game server by name, or `null` if unknown. Registered by [GameServerManager]. */
     private var gameServerLookup: suspend (String) -> GameServerManager.GameServer? = { null }
@@ -534,21 +518,18 @@ class QueueService @Inject constructor(
 
     override suspend fun getGames() = data.withServers { servers -> servers.flatMap { it.games } }
 
-    override val gameStateService by lazy { GameStateService() }
-
-    inner class GameStateService : GameStateServiceGrpcKt.GameStateServiceCoroutineImplBase() {
-        override suspend fun updateGameState(request: ServerTracking.GameStateUpdateRequest): Empty = handleRPC {
-            setGameState(request.instanceUuid, request.gameState)
-            return Empty.getDefaultInstance()
-        }
-    }
-
     private val destinationCache = Caffeine.newBuilder()
         .expireAfterWrite(Duration.ofSeconds(10))
         .build<UUID, String>()
 
     override fun setDestination(player: UUID, gameId: String) {
         destinationCache.put(player, gameId)
+    }
+
+    override fun consumeDestination(player: UUID): String? {
+        val destination = destinationCache.getIfPresent(player) ?: return null
+        destinationCache.invalidate(player)
+        return destination
     }
 
     override suspend fun sendPlayerToInstance(player: UUID, gameId: String) {
@@ -586,65 +567,5 @@ class QueueService @Inject constructor(
             this.gameServerPort = gameServerObj.port!!
             this.instanceId = gameId
         })
-    }
-
-    override val queueService by lazy { QueueService() }
-
-    inner class QueueService : QueueServiceGrpcKt.QueueServiceCoroutineImplBase() {
-        override suspend fun addToQueue(request: Queue.AddToQueueRequest): Empty = handleRPC {
-            val playerUuid = UUID.fromString(request.playerUuid)
-            val party = partyLookup(playerUuid)
-            val isLobby = request.gameType.name == Env.LOBBY_GAME_NAME
-            if (party != null && party.leader != playerUuid && !isLobby) {
-                playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
-                return@handleRPC Empty.getDefaultInstance()
-            }
-
-            val queuedPlayers = if (party != null && party.leader != playerUuid) {
-                // Non-leader party members may only queue themselves (e.g. to go to the lobby)
-                listOf(playerUuid)
-            } else {
-                party?.getMembers() ?: listOf(playerUuid)
-            }
-            addToQueue(QueuedParty(queuedPlayers, request.gameType))
-
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun bulkAddToQueue(request: Queue.BulkAddToQueueRequest): Empty {
-            for (request in request.requestsList) {
-                val uuid = UUID.fromString(request.playerUuid)
-                val party = partyLookup(uuid)
-                if (party == null || party.leader == uuid || request.gameType.name == Env.LOBBY_GAME_NAME) {
-                    addToQueue(request)
-                }
-            }
-            return Empty.getDefaultInstance()
-        }
-
-        override suspend fun getDestinationGame(request: GetDestinationRequest): GetDestinationResponse = handleRPC {
-            val player = UUID.fromString(request.playerUuid)
-            val destination = destinationCache.getIfPresent(player)
-            return if (destination != null) {
-                destinationCache.invalidate(player)
-                GetDestinationResponse.newBuilder()
-                    .setGameId(destination)
-                    .build()
-            } else {
-                GetDestinationResponse.getDefaultInstance()
-            }
-        }
-
-        override suspend fun removeFromQueue(request: Queue.RemoveFromQueueRequest): Empty = handleRPC {
-            val playerUuid = UUID.fromString(request.playerUuid)
-            val party = partyLookup(playerUuid)
-            if (party != null && party.leader != playerUuid) {
-                playerTracker.sendChat(playerUuid, "<red><lang:puffin.party.game_join_disallowed.not_leader>")
-                return@handleRPC Empty.getDefaultInstance()
-            }
-
-            removeFromQueue(playerUuid)
-            return Empty.getDefaultInstance()
-        }
     }
 }

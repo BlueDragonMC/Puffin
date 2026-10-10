@@ -1,12 +1,8 @@
 package com.bluedragonmc.puffin.services
 
-import com.bluedragonmc.api.grpc.VelocityMessage
-import com.bluedragonmc.api.grpc.VelocityMessageServiceGrpcKt
-import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
-import com.google.protobuf.Empty
 import java.time.Duration
 import java.util.*
 
@@ -26,28 +22,28 @@ class PrivateMessageService @Inject constructor(val playerTracker: IPlayerTracke
         .expireAfterAccess(Duration.ofMinutes(5))
         .build<UUID, UUID>()
 
-    inner class VelocityMessageService : VelocityMessageServiceGrpcKt.VelocityMessageServiceCoroutineImplBase() {
-        override suspend fun sendMessage(request: VelocityMessage.PrivateMessageRequest): Empty = handleRPC {
-            val finalMessage =
-                "<p2><lang:command.msg.received:'<p1>${request.senderUsername}':'<gray>${request.message}'>"
-            val recipient = if (request.recipientUuid.isNullOrBlank()) {
-                lastReplyCache.getIfPresent(UUID.fromString(request.senderUuid))
-            } else {
-                UUID.fromString(request.recipientUuid)
-            }
-            if (recipient == null) {
-                playerTracker.sendChat(
-                    UUID.fromString(request.senderUuid),
-                    "<red>You have not replied to anyone recently!"
-                )
-                return Empty.getDefaultInstance() // No possible recipient was found.
-            }
-            // Send the message to the recipient
-            playerTracker.sendChat(recipient, finalMessage)
-            // Update the sender's most recent recipient
-            lastReplyCache.put(UUID.fromString(request.senderUuid), recipient)
-
-            return Empty.getDefaultInstance()
+    /**
+     * Sends [message] from [senderUuid] to [recipientUuid], or to the sender's last reply recipient
+     * if [recipientUuid] is blank.
+     */
+    suspend fun sendPrivateMessage(senderUuid: String, senderUsername: String, recipientUuid: String?, message: String) {
+        val finalMessage =
+            "<p2><lang:command.msg.received:'<p1>$senderUsername':'<gray>$message'>"
+        val recipient = if (recipientUuid.isNullOrBlank()) {
+            lastReplyCache.getIfPresent(UUID.fromString(senderUuid))
+        } else {
+            UUID.fromString(recipientUuid)
         }
+        if (recipient == null) {
+            playerTracker.sendChat(
+                UUID.fromString(senderUuid),
+                "<red>You have not replied to anyone recently!"
+            )
+            return // No possible recipient was found.
+        }
+        // Send the message to the recipient
+        playerTracker.sendChat(recipient, finalMessage)
+        // Update the sender's most recent recipient
+        lastReplyCache.put(UUID.fromString(senderUuid), recipient)
     }
 }
