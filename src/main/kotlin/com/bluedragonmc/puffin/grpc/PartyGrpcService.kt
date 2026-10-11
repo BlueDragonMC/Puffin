@@ -114,8 +114,10 @@ class PartyGrpcService @Inject constructor(
                 players += partyManager.getMembers(party).map {
                     playerEntry {
                         this.uuid = it.toString()
-                        username = partyManager.getUsername(it)
-                        role = if (partyManager.getLeader(party) == it) "Leader" else "Member"
+                        username = partyManager.getPlainUsername(it)
+                        color = partyManager.getPlayerColor(it)
+                        role = if (partyManager.getLeader(party) == it) PartySvc.PartyListResponse.Role.LEADER
+                        else PartySvc.PartyListResponse.Role.MEMBER
                     }
                 }
             }

@@ -17,6 +17,8 @@ interface IPartyManager {
     fun registerPartyUpdateCallback(cb: (action: String, id: String, party: Party?) -> Unit)
     fun createParty(leader: UUID): Party
     suspend fun getUsername(uuid: UUID): String
+    suspend fun getPlainUsername(uuid: UUID): String
+    suspend fun getPlayerColor(uuid: UUID): String
     fun getMembers(party: Party): List<UUID>
     fun getLeader(party: Party): UUID
     fun getInvitations(party: Party): Map<UUID, Job>
@@ -72,11 +74,16 @@ class PartyManager @Inject constructor(
     /**
      * Returns the username of the UUID, with an (optional) MiniMessage-formatted color prepended.
      */
-    override suspend fun getUsername(uuid: UUID): String {
-        val color = databaseConnection.getPlayerNameColor(uuid)
-        val username = databaseConnection.getPlayerName(uuid) ?: uuid.toString()
-        return "<$color>$username"
-    }
+    override suspend fun getUsername(uuid: UUID): String =
+        "<${getPlayerColor(uuid)}>${getPlainUsername(uuid)}"
+
+    /** Returns the player's plain username, with no formatting. */
+    override suspend fun getPlainUsername(uuid: UUID): String =
+        databaseConnection.getPlayerName(uuid) ?: uuid.toString()
+
+    /** Returns the MiniMessage color used to display the player's name. */
+    override suspend fun getPlayerColor(uuid: UUID): String =
+        databaseConnection.getPlayerNameColor(uuid)
 
     private suspend fun UUID.name(): String = getUsername(this)
 
