@@ -1,12 +1,13 @@
 # Puffin
 
 **Puffin** is BlueDragon's game server orchestration service and queue system.
-It runs in a container inside a Kubernetes cluster and uses the Agones API to discover game servers, manage the
-instances running on them, and route players to games.
+It runs in a container inside a Kubernetes cluster and uses the Kubernetes API to discover game server pods, manage
+the instances running on them, and route players to games.
 
 ## Usage
 
-Puffin expects an Agones-enabled Kubernetes cluster, MongoDB, the LuckPerms REST API, and a populated worlds folder.
+Puffin expects a Kubernetes cluster, MongoDB, the LuckPerms REST API, and a populated worlds folder.
+Game servers are discovered from pods with the `app=server` label, normally owned by the `server` Deployment.
 See the [deployment guides](https://developer.bluedragonmc.com/deployment/kubernetes/) for details.
 
 - Clone: `git clone https://github.com/BlueDragonMC/Puffin.git`
@@ -20,22 +21,26 @@ Puffin is built and run with JDK 25.
 
 Environment variables:
 
-| Name                              | Description                                                                                                 | Default                    |
-|-----------------------------------|-------------------------------------------------------------------------------------------------------------|----------------------------|
-| `PUFFIN_GRPC_PORT`                | The port that Puffin uses for its gRPC server.                                                              | 50051                      |
-| `PUFFIN_K8S_NAMESPACE`            | The Kubernetes namespace used in all API requests.                                                          | default                    |
-| `PUFFIN_WORLD_FOLDER`             | The worlds folder, as described in the [docs](https://developer.bluedragonmc.com/reference/worlds-folder/). | /puffin/worlds/            |
-| `PUFFIN_MONGO_CONNECTION_STRING`  | A MongoDB connection string.                                                                                | mongodb://mongo:27017      |
-| `PUFFIN_LUCKPERMS_URL`            | The base URL used to interact with the LuckPerms REST API.                                                  | http://luckperms:8080      |
-| `PUFFIN_DRAIN_OUTDATED_SERVERS`   | When true, game servers running an out-of-date version are drained (no new games are created on them).      | true                       |
-| `PUFFIN_LOBBY_GAME_NAME`          | The name of the game type used for lobbies.                                                                 | Lobby                      |
-| `PUFFIN_GS_SYNC_PERIOD_MS`        | The amount of milliseconds in between game server syncs                                                     | 10000                      |
-| `PUFFIN_K8S_SYNC_PERIOD_MS`       | The amount of milliseconds in between proxy syncs                                                           | 10000                      |
-| `PUFFIN_GAMESERVER_GRPC_PORT`     | The port used to create gRPC channels to game servers                                                       | 50051                      |
-| `PUFFIN_PROXY_GRPC_PORT`          | The port used to create gRPC channels to proxy servers                                                      | 50051                      |
-| `PUFFIN_API_PORT`                 | The port used for the dashboard WebSocket API.                                                              | 8080                       |
-| `PUFFIN_MAPS_PORT`                | The port that the map service listens on for map data.                                                      | 8082                       |
-| `PUFFIN_SERVICE_HOST`             | The hostname used to build map download URLs (set automatically by Kubernetes).                             | The local machine hostname |
+| Name                                | Description                                                                                                 | Default                    |
+|-------------------------------------|-------------------------------------------------------------------------------------------------------------|----------------------------|
+| `PUFFIN_GRPC_PORT`                  | The port that Puffin uses for its gRPC server.                                                              | 50051                      |
+| `PUFFIN_K8S_NAMESPACE`              | The Kubernetes namespace used in all API requests.                                                          | default                    |
+| `PUFFIN_GAMESERVER_DEPLOYMENT_NAME` | The Deployment that owns game server pods.                                                                  | server                     |
+| `PUFFIN_GAMESERVER_LABEL_SELECTOR`  | The label selector used to discover game server pods.                                                       | app=server                 |
+| `PUFFIN_GAMESERVER_PORT`            | The Minecraft port exposed by each game server pod.                                                         | 25565                      |
+| `PUFFIN_GAMESERVER_CONTAINER_NAME`  | The name of the game server container in the Deployment and pods.                                           | server                     |
+| `PUFFIN_WORLD_FOLDER`               | The worlds folder, as described in the [docs](https://developer.bluedragonmc.com/reference/worlds-folder/). | /puffin/worlds/            |
+| `PUFFIN_MONGO_CONNECTION_STRING`    | A MongoDB connection string.                                                                                | mongodb://mongo:27017      |
+| `PUFFIN_LUCKPERMS_URL`              | The base URL used to interact with the LuckPerms REST API.                                                  | http://luckperms:8080      |
+| `PUFFIN_DRAIN_OUTDATED_SERVERS`     | When true, game servers running an out-of-date version are drained (no new games are created on them).      | true                       |
+| `PUFFIN_LOBBY_GAME_NAME`            | The name of the game type used for lobbies.                                                                 | Lobby                      |
+| `PUFFIN_GS_SYNC_PERIOD_MS`          | The amount of milliseconds in between game server syncs                                                     | 10000                      |
+| `PUFFIN_K8S_SYNC_PERIOD_MS`         | The amount of milliseconds in between proxy syncs                                                           | 10000                      |
+| `PUFFIN_GAMESERVER_GRPC_PORT`       | The port used to create gRPC channels to game servers                                                       | 50051                      |
+| `PUFFIN_PROXY_GRPC_PORT`            | The port used to create gRPC channels to proxy servers                                                      | 50051                      |
+| `PUFFIN_API_PORT`                   | The port used for the dashboard WebSocket API.                                                              | 8080                       |
+| `PUFFIN_MAPS_PORT`                  | The port that the map service listens on for map data.                                                      | 8082                       |
+| `PUFFIN_SERVICE_HOST`               | The hostname used to build map download URLs (set automatically by Kubernetes).                             | The local machine hostname |
 
 > [!TIP]
 > If you are running Puffin on the same machine as a proxy or game server without containers or VMs, you will have
@@ -52,7 +57,7 @@ Puffin is composed of many different services:
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------|
 | ApiService            | Streams players, parties, servers, and instances to the dashboard over a WebSocket.                                       |
 | DatabaseConnection    | Connects to MongoDB and the LuckPerms API to fetch player names, UUIDs, colors, and map data. Caches responses in memory. |
-| GameServerManager     | Watches Agones game servers and keeps track of the instances running on each one.                                         |
+| GameServerManager     | Watches game server pods and keeps track of the instances running on each one.                                            |
 | JukeboxService        | Saves players' song queues while they transfer between servers.                                                           |
 | K8sServiceDiscovery   | Uses the Kubernetes API to maintain a set of proxy and game server IP addresses accessible within the cluster.            |
 | MapService            | Serves map data and configs to game servers over HTTP and gRPC.                                                           |
@@ -70,10 +75,10 @@ This is not an exhaustive list.
 
 When Puffin starts up, it needs to sync up its state with the rest of the cluster. This involves:
 
-| Service             | Action                                                                                     |
-|---------------------|--------------------------------------------------------------------------------------------|
-| GameServerManager   | Listing `GameServer` objects and loading the current image of each Agones Fleet            |
-| K8sServiceDiscovery | Listing proxies in the cluster and getting player lists from each one                      |
+| Service             | Action                                                                              |
+|---------------------|-------------------------------------------------------------------------------------|
+| GameServerManager   | Listing game server pods and loading the desired image from the `server` Deployment |
+| K8sServiceDiscovery | Listing proxies in the cluster and getting player lists from each one               |
 
 ### When a player logs in to a proxy
 

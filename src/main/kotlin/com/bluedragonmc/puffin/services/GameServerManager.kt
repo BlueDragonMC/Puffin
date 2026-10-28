@@ -8,12 +8,14 @@ import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.util.GrpcChannels
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.google.gson.reflect.TypeToken
 import com.google.inject.Inject
 import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import io.grpc.StatusException
 import io.kubernetes.client.openapi.ApiException
-import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
+import io.kubernetes.client.openapi.models.V1Pod
+import io.kubernetes.client.util.Watch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -23,21 +25,21 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Duration
 
-/** The first backoff applied after a failed Agones watch. */
+/** The first backoff applied after a failed pod watch. */
 private const val WATCH_INITIAL_BACKOFF_MS = 500L
 
-/** The maximum backoff between Agones watch attempts. */
+/** The maximum backoff between pod watch attempts. */
 private const val WATCH_MAX_BACKOFF_MS = 30_000L
 
 /** A watch that stays up at least this long is considered healthy and reconnects immediately. */
 private const val WATCH_STABLE_MILLIS = 10_000L
 
-/** Exponential backoff for the Agones watch, starting at [WATCH_INITIAL_BACKOFF_MS] and capped. */
+/** Exponential backoff for the pod watch, starting at [WATCH_INITIAL_BACKOFF_MS] and capped. */
 private fun nextWatchBackoff(current: Long): Long =
     if (current == 0L) WATCH_INITIAL_BACKOFF_MS else (current * 2).coerceAtMost(WATCH_MAX_BACKOFF_MS)
 
 interface IGameServerManager {
-    suspend fun getK8sObject(serverName: String): GameServer?
+    suspend fun getGameServer(serverName: String): GameServer?
 
     fun registerGameServerListener(listener: suspend (GameServerEvent) -> Unit)
 
@@ -58,7 +60,7 @@ sealed interface GameServerEvent {
 }
 
 /**
- * Fetches and maintains a list of game servers using the Kubernetes API
+ * Fetches and maintains the list of game server pods using the Kubernetes API.
  */
 @Singleton
 class GameServerManager @Inject constructor(
@@ -76,11 +78,11 @@ class GameServerManager @Inject constructor(
         .expireAfterWrite(Duration.ofMinutes(2))
         .build<String, Int>()
 
-    /** Guards all access to [kubernetesObjects] and [readyGameServers]. */
+    /** Guards all access to [pods] and [readyGameServers]. */
     private val stateMutex = Mutex()
 
-    private var kubernetesObjects = mutableListOf<DynamicKubernetesObject>()
-    private val readyGameServers = mutableListOf<String>()
+    private val pods = mutableListOf<V1Pod>()
+    private val readyGameServers = mutableSetOf<String>()
 
     private val gameServerListeners = mutableListOf<suspend (GameServerEvent) -> Unit>()
 
@@ -104,17 +106,17 @@ class GameServerManager @Inject constructor(
                     if (ranMillis >= WATCH_STABLE_MILLIS) {
                         // If the watch stayed active for >= 10 seconds, retry immediately
                         backoffMillis = 0L
-                        logger.warn("Agones watch ended; reconnecting...")
+                        logger.warn("Game server pod watch ended; reconnecting...")
                     } else {
                         // If the watch wasn't active for very long, consider it an error and retry with backoff
                         backoffMillis = nextWatchBackoff(backoffMillis)
-                        logger.warn("Agones watch ended after only ${ranMillis}ms; retrying in ${backoffMillis}ms...")
+                        logger.warn("Game server pod watch ended after only ${ranMillis}ms; retrying in ${backoffMillis}ms...")
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     backoffMillis = nextWatchBackoff(backoffMillis)
-                    logger.error("Error watching Agones resources; retrying in ${backoffMillis}ms...", e)
+                    logger.error("Error watching game server pods; retrying in ${backoffMillis}ms...", e)
                 }
                 if (backoffMillis > 0) delay(backoffMillis)
             }
@@ -125,9 +127,11 @@ class GameServerManager @Inject constructor(
             initialDelayMillis = config.gsSyncPeriod,
             periodMillis = config.gsSyncPeriod
         ) {
-            for ((serverName, _) in queueService.getServers()) {
+            for (server in queueService.getServers()) {
+                if (!server.ready || server.terminating) continue
                 applicationScope.launch {
-                    syncExistingServer(serverName)
+                    runCatching { syncExistingServer(server.name) }
+                        .onFailure { logger.warn("Failed to sync existing game server ${server.name}", it) }
                 }
             }
 
@@ -137,37 +141,25 @@ class GameServerManager @Inject constructor(
     }
 
     suspend fun reloadGameServers() = stateMutex.withLock {
-        withContext(Dispatchers.IO) { refreshFleetVersions() }
-        val items = withContext(Dispatchers.IO) { kubernetesClients.gameServers.list().`object`.items }
-        val previousK8sObjects = ArrayList(kubernetesObjects)
-        items.forEach { server ->
-            if (previousK8sObjects.none { it.metadata.uid == server.metadata.uid }) {
-                // New server found!
-                logger.info("New GameServer found during manual sync: ${server.metadata.name}")
-                kubernetesObjects.add(server)
-                val state = server.raw.get("status")?.asJsonObject?.get("state")?.asString
-                if (state == "Ready" || state == "Reserved" || state == "Allocated") {
-                    readyGameServers.add(server.metadata.name!!)
-                    processServerAdded(server)
-                }
-            } else {
-                // Update existing game servers
-                val index = kubernetesObjects.indexOfFirst { it.metadata.uid == server.metadata.uid }
-                if (index in kubernetesObjects.indices) {
-                    val old = kubernetesObjects[index]
-                    kubernetesObjects[index] = server
-                    if (old != server) {
-                        notifyListeners(GameServerEvent.Merged(AgonesGameServer(old), AgonesGameServer(server)))
-                    }
-                }
-            }
+        withContext(Dispatchers.IO) { refreshDesiredVersion() }
+
+        val items = withContext(Dispatchers.IO) {
+            kubernetesClients.coreV1.listNamespacedPod(config.k8sNamespace)
+                .labelSelector(config.gameServerLabelSelector)
+                .execute()
+                .items
+                ?: emptyList()
         }
-        previousK8sObjects.forEach { obj ->
-            if (items.none { it.metadata.uid == obj.metadata.uid }) {
-                // A game server was removed during the sync!
-                logger.info("A GameServer was removed during manual sync: ${obj.metadata.name}")
-                processServerRemoved(obj)
-                kubernetesObjects.remove(obj)
+
+        val previousPods = ArrayList(pods)
+        items.forEach { pod -> upsertPod(pod) }
+
+        previousPods.forEach { pod ->
+            val name = pod.metadata?.name ?: return@forEach
+            if (items.none { it.metadata?.name == name }) {
+                logger.info("Game server pod $name was removed during a manual sync.")
+                processPodRemoved(pod)
+                pods.removeIf { it.metadata?.name == name }
             }
         }
 
@@ -175,104 +167,147 @@ class GameServerManager @Inject constructor(
     }
 
     private suspend fun watch() = withContext(Dispatchers.IO) {
-        val watch = kubernetesClients.gameServers.watch()
-        watch.forEach { event ->
-            stateMutex.withLock {
-                val obj = event.`object`
-                val newState = obj.raw.get("status")?.asJsonObject?.get("state")?.asString
-                when (event.type) {
-                    "ADDED" -> {
-                        // A new game server was added
-                        if (kubernetesObjects.none { it.metadata.uid == obj.metadata.uid }) {
-                            kubernetesObjects.add(obj)
-                        }
-                    }
+        val call = kubernetesClients.coreV1.listNamespacedPod(config.k8sNamespace)
+            .labelSelector(config.gameServerLabelSelector)
+            .watch(true)
+            .buildCall(null)
 
-                    "MODIFIED" -> {
-                        // An existing game server had its metadata or other information change
-                        val index = kubernetesObjects.indexOfFirst { it.metadata.uid == obj.metadata.uid }
-                        val old = kubernetesObjects[index]
-                        kubernetesObjects[index] = obj
-                        if (old != obj) {
-                            notifyListeners(GameServerEvent.Merged(AgonesGameServer(old), AgonesGameServer(obj)))
-                        }
-                        val serverName = obj.metadata.name!!
-                        logger.debug("Game server '$serverName' is now in state: $newState")
-                        if (newState == "Ready" && !readyGameServers.contains(serverName)) {
-                            // If the server changed from any other state to ready (and it hasn't been ready before),
-                            // attempt to ping it and look at its players and instances.
-                            readyGameServers.add(serverName)
-                            processServerAdded(obj)
-                        }
-                    }
+        val watchType = object : TypeToken<Watch.Response<V1Pod>>() {}.type
+        val watch: Watch<V1Pod> = Watch.createWatch(kubernetesClients.client, call, watchType)
+        watch.use { activeWatch ->
+            for (event in activeWatch) {
+                val pod = event.`object`
+                if (pod == null) {
+                    logger.warn("Kubernetes pod watch returned an error: ${event.status}")
+                    continue
+                }
 
-                    "DELETED" -> {
-                        // A game server was removed
-                        val removed = kubernetesObjects.removeIf { it.metadata.uid == obj.metadata.uid }
-                        if (removed) {
-                            processServerRemoved(obj)
-                        } else {
-                            logger.warn("Unknown GameServer was deleted: ${obj.metadata.name}")
-                        }
-                    }
+                stateMutex.withLock {
+                    when (event.type) {
+                        "ADDED", "MODIFIED" -> upsertPod(pod)
 
-                    else -> logger.warn("Unknown Kubernetes API event type: ${event.type}")
+                        "DELETED" -> {
+                            val name = pod.metadata?.name
+                            val tracked = name?.let { podName ->
+                                pods.find { it.metadata?.name == podName }
+                            }
+                            val removed = name != null && pods.removeIf { it.metadata?.name == name }
+                            if (removed) {
+                                processPodRemoved(tracked ?: pod)
+                            } else {
+                                logger.warn("Unknown game server pod was deleted: $name")
+                            }
+                        }
+
+                        else -> logger.warn("Unknown Kubernetes API event type: ${event.type}")
+                    }
                 }
             }
         }
     }
 
-    private suspend fun processServerRemoved(`object`: DynamicKubernetesObject) {
-        val gs = AgonesGameServer(`object`)
-        logger.info("GameServer ${gs.name} was removed.")
-        queueService.removeServer(gs.name)
-        readyGameServers.remove(gs.name)
-        grpcChannels.close(gs.address)
-        notifyListeners(GameServerEvent.Removed(gs.name))
-    }
+    private suspend fun upsertPod(pod: V1Pod) {
+        val name = pod.metadata?.name ?: return
+        val index = pods.indexOfFirst { it.metadata?.name == name }
 
-    private suspend fun processServerAdded(`object`: DynamicKubernetesObject) {
-        val gs = AgonesGameServer(`object`)
-        logger.info("New GameServer found: ${gs.name} (${gs.address}:${gs.port})")
-        queueService.addServer(gs.name, gs.address, gs.port)
-
-        // Get all running instances on this newly-added server
-        applicationScope.launch {
-            syncNewServer(gs.name)
+        if (index == -1) {
+            pods.add(pod)
+            processPodAdded(pod)
+            return
         }
-        notifyListeners(GameServerEvent.Added(gs))
-        updateDraining(`object`)
+
+        val old = pods[index]
+        if (old.metadata?.uid != pod.metadata?.uid) {
+            // The pod was replaced with a new one that happens to reuse the same name.
+            processPodRemoved(old)
+            pods[index] = pod
+            processPodAdded(pod)
+        } else {
+            pods[index] = pod
+            processPodModified(old, pod)
+        }
     }
 
-    private fun refreshFleetVersions() {
+    private suspend fun processPodAdded(pod: V1Pod) {
+        val gs = toGameServer(pod)
+        logger.info("New game server pod found: ${gs.name} (${gs.address}:${gs.port})")
+        queueService.addServer(gs.name, pod.status?.podIP, gs.port, gs.ready, gs.terminating)
+
+        notifyListeners(GameServerEvent.Added(gs))
+
+        if (gs.ready) {
+            readyGameServers.add(gs.name)
+            applicationScope.launch { syncNewServer(gs.name) }
+        }
+
+        updateDraining(pod)
+    }
+
+    private suspend fun processPodModified(oldPod: V1Pod, pod: V1Pod) {
+        val gs = toGameServer(pod)
+        queueService.addServer(gs.name, pod.status?.podIP, gs.port, gs.ready, gs.terminating)
+
+        if (oldPod != pod) {
+            notifyListeners(GameServerEvent.Merged(toGameServer(oldPod), gs))
+        }
+
+        if (gs.ready) {
+            if (readyGameServers.add(gs.name)) {
+                logger.info("Game server pod ${gs.name} is now ready.")
+                applicationScope.launch { syncNewServer(gs.name) }
+            }
+        } else {
+            readyGameServers.remove(gs.name)
+        }
+
+        updateDraining(pod)
+    }
+
+    private suspend fun processPodRemoved(pod: V1Pod) {
+        val name = pod.metadata?.name ?: return
+        val address = pod.status?.podIP.orEmpty()
+
+        logger.info("Game server pod $name was removed.")
+        queueService.removeServer(name)
+        readyGameServers.remove(name)
+        if (address.isNotEmpty()) {
+            grpcChannels.close(address)
+        }
+        notifyListeners(GameServerEvent.Removed(name))
+    }
+
+    private fun refreshDesiredVersion() {
         if (!config.drainOutdatedServers) return
         versionResolver.refresh()
     }
 
     private suspend fun updateDraining() {
         if (!config.drainOutdatedServers) return
-        kubernetesObjects.forEach { updateDraining(it) }
+        pods.forEach { updateDraining(it) }
     }
 
     /**
-     * Recomputes whether [object] is running an outdated version.
+     * Recomputes whether [pod] is running an outdated version.
      */
-    private suspend fun updateDraining(`object`: DynamicKubernetesObject) {
+    private suspend fun updateDraining(pod: V1Pod) {
         if (!config.drainOutdatedServers) return
-        val gs = AgonesGameServer(`object`)
-        val draining = isOutdated(`object`)
+        val gs = toGameServer(pod)
         val server = queueService.getServer(gs.name) ?: return
+        val draining = isOutdated(pod)
         if (server.draining == draining) return
         queueService.setServerDraining(gs.name, draining)
-        logger.info("GameServer ${gs.name} is now ${if (draining) "draining (outdated)" else "up to date"}.")
+        logger.info("Game server pod ${gs.name} is now ${if (draining) "draining (outdated)" else "up to date"}.")
         notifyListeners(GameServerEvent.Updated(gs))
     }
 
-    private fun isOutdated(`object`: DynamicKubernetesObject): Boolean {
-        val running = versionResolver.runningGeneration(`object`) ?: return false
-        val desired = versionResolver.desiredGeneration(`object`) ?: return false
+    private fun isOutdated(pod: V1Pod): Boolean {
+        val running = versionResolver.runningGeneration(pod) ?: return false
+        val desired = versionResolver.desiredGeneration() ?: return false
         return running != desired
     }
+
+    private fun toGameServer(pod: V1Pod): PodGameServer =
+        PodGameServer(pod, config.gameServerPort, kubernetesClients.podJson(pod))
 
     private suspend fun syncExistingServer(serverName: String) {
         val channel = k8sServiceDiscovery.getChannelToServer(serverName) ?: return
@@ -284,8 +319,18 @@ class GameServerManager @Inject constructor(
         playerTracker.updateGameServerPlayers(serverName, playersResponse)
 
         instancesResponse.instancesList.forEach { instance ->
-            queueService.setGameState(instance.instanceUuid, instance.gameState)
-            playerTracker.updateGamePlayers(instance.instanceUuid, instance)
+            val id = instance.instanceUuid
+            if (queueService.getGame(id) == null) {
+                handleInstanceCreated(instanceCreatedRequest {
+                    this.serverName = serverName
+                    this.instanceUuid = id
+                    this.gameType = instance.gameType
+                    this.gameState = instance.gameState
+                })
+            } else {
+                queueService.setGameState(id, instance.gameState)
+            }
+            playerTracker.updateGamePlayers(id, instance)
         }
     }
 
@@ -302,18 +347,24 @@ class GameServerManager @Inject constructor(
             logger.info("Found ${playersResponse.playersCount} players on server $serverName")
             instancesResponse.instancesList.forEach { instance ->
                 val id = instance.instanceUuid
-                handleInstanceCreated(instanceCreatedRequest {
-                    this.serverName = serverName
-                    this.instanceUuid = id
-                    this.gameType = instance.gameType
-                    this.gameState = instance.gameState
-                })
+                if (queueService.getGame(id) == null) {
+                    handleInstanceCreated(instanceCreatedRequest {
+                        this.serverName = serverName
+                        this.instanceUuid = id
+                        this.gameType = instance.gameType
+                        this.gameState = instance.gameState
+                    })
+                } else {
+                    queueService.setGameState(id, instance.gameState)
+                }
                 playerTracker.updateGamePlayers(id, instance)
             }
             logger.info("Found ${instancesResponse.instancesCount} instances on server $serverName.")
         } catch (e: StatusException) {
             try {
-                withContext(Dispatchers.IO) { kubernetesClients.coreV1.readNamespacedPod(serverName, config.k8sNamespace).execute() }
+                withContext(Dispatchers.IO) {
+                    kubernetesClients.coreV1.readNamespacedPod(serverName, config.k8sNamespace).execute()
+                }
             } catch (e: ApiException) {
                 // If there was an error looking up the pod, it likely no longer exists.
                 // This means there was some sort of desync between our watch and the reality in the cluster.
@@ -336,8 +387,8 @@ class GameServerManager @Inject constructor(
         }
     }
 
-    override suspend fun getK8sObject(serverName: String): GameServer? = stateMutex.withLock {
-        kubernetesObjects.map { AgonesGameServer(it) }.find { it.name == serverName }
+    override suspend fun getGameServer(serverName: String): GameServer? = stateMutex.withLock {
+        pods.find { it.metadata?.name == serverName }?.let(::toGameServer)
     }
 
     override suspend fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
@@ -345,9 +396,12 @@ class GameServerManager @Inject constructor(
             "Game created: ${request.serverName}/${request.instanceUuid} " +
                     "(${request.gameType.name}/${request.gameType.mapId}/${request.gameType.mode})"
         )
-        queueService.addGame(request.serverName, request.instanceUuid, request.gameType, request.gameState)
-
-        notifyListeners(GameServerEvent.InstanceAdded(request.instanceUuid))
+        if (queueService.getGame(request.instanceUuid) == null) {
+            queueService.addGame(request.serverName, request.instanceUuid, request.gameType, request.gameState)
+            notifyListeners(GameServerEvent.InstanceAdded(request.instanceUuid))
+        } else {
+            queueService.setGameState(request.instanceUuid, request.gameState)
+        }
     }
 
     override suspend fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {

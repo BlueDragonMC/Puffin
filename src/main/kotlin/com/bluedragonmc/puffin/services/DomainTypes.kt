@@ -2,7 +2,8 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.CommonTypes
 import com.bluedragonmc.api.grpc.CommonTypes.EnumGameState
-import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject
+import com.google.gson.JsonObject
+import io.kubernetes.client.openapi.models.V1Pod
 import kotlinx.coroutines.Job
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -14,23 +15,35 @@ interface GameServer {
     val address: String
     val name: String
     val port: Int?
+
+    /** Whether the pod is Ready and has received an IP address. */
+    val ready: Boolean
+
+    /** Whether the pod is scheduled to be deleted. */
+    val terminating: Boolean
 }
 
 /**
- * A [GameServer] backed by an Agones `GameServer` Kubernetes object.
+ * A [GameServer] backed by a game server pod.
  */
-class AgonesGameServer(val `object`: DynamicKubernetesObject) : GameServer {
-    private val status = `object`.raw.getAsJsonObject("status")
+class PodGameServer(
+    val pod: V1Pod,
+    override val port: Int?,
+    val raw: JsonObject = JsonObject(),
+) : GameServer {
 
-    override val address: String by lazy {
-        return@lazy status.get("address").asString
-    }
-    override val port by lazy {
-        if (status.has("ports") && status.get("ports").isJsonArray) status.get("ports").asJsonArray.first { p ->
-            p.asJsonObject.get("name").asString == "minecraft"
-        }.asJsonObject.get("port").asInt else null
-    }
-    override val name = `object`.metadata.name!!
+    override val name = pod.metadata?.name ?: error("Game server pod has no name")
+
+    override val address: String
+        get() = pod.status?.podIP.orEmpty()
+
+    override val ready: Boolean
+        get() = pod.metadata?.deletionTimestamp == null &&
+                pod.status?.podIP != null &&
+                pod.status?.conditions?.any { it.type == "Ready" && it.status == "True" } == true
+
+    override val terminating: Boolean
+        get() = pod.metadata?.deletionTimestamp != null
 }
 
 /**
@@ -46,7 +59,9 @@ data class QueueServer(
     val games: List<Game>,
     val address: String? = null,
     val port: Int? = null,
+    val ready: Boolean = true,
     val draining: Boolean = false,
+    val terminating: Boolean = false,
 )
 
 /**

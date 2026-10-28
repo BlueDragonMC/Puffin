@@ -42,11 +42,15 @@ private const val QUEUE_LOOP_RATE_LIMIT_PERIOD_MS: Long = 1_000
 private const val QUEUE_PARTY_MAX_ATTEMPTS = 5
 
 /**
- * Chooses which game servers new games may be created on. Up-to-date (non-draining) servers are
- * preferred; draining servers are only used when every server is draining.
+ * Chooses which game servers new games may be created on.
+ *
+ * Not-ready and terminating servers are never candidates. Up-to-date (non-draining) servers are
+ * preferred; draining servers are only used when every usable server is draining.
  */
-internal fun placementCandidates(servers: List<QueueServer>): List<QueueServer> =
-    servers.filter { !it.draining }.ifEmpty { servers }
+internal fun placementCandidates(servers: List<QueueServer>): List<QueueServer> {
+    val usable = servers.filter { it.ready && !it.terminating }
+    return usable.filter { !it.draining }.ifEmpty { usable }
+}
 
 interface IQueueService {
     suspend fun getServers(): List<QueueServer>
@@ -61,7 +65,13 @@ interface IQueueService {
     suspend fun processQueue()
 
     suspend fun removeServer(name: String)
-    suspend fun addServer(name: String, address: String?, port: Int?)
+    suspend fun addServer(
+        name: String,
+        address: String?,
+        port: Int?,
+        ready: Boolean = true,
+        terminating: Boolean = false,
+    )
     suspend fun setServerDraining(name: String, draining: Boolean)
     suspend fun removeGame(serverName: String, gameId: String)
     suspend fun getGamesMatching(gameType: CommonTypes.GameType): List<Game>
@@ -256,8 +266,9 @@ class QueueService @Inject constructor(
                 return@withLock
             }
             val servers: List<QueueServer> = data.withServers { servers -> servers.toList() }
+            val placementServers = placementCandidates(servers)
             val jobs = mutableListOf<Job>()
-            val games = servers.flatMap { it.games }
+            val games = placementServers.flatMap { it.games }
             // game id -> effective player count
             val effectivePlayerCounts = mutableMapOf<String, Int>()
             val effectiveGames = ArrayList(games)
@@ -346,8 +357,6 @@ class QueueService @Inject constructor(
 
             val newGames =
                 effectiveGames.takeLast(effectiveGames.size - games.size).take(MAX_GAMES_PER_CYCLE)
-            // Prefer servers that are up to date. Only use a draining server when all servers are draining.
-            val placementServers = placementCandidates(servers)
             // server id -> number of games on it
             val effectiveGameCounts = mutableMapOf<String, Int>()
             placementServers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
@@ -412,28 +421,63 @@ class QueueService @Inject constructor(
         applicationScope.launch { processQueue() }
     }
 
-    override suspend fun addServer(name: String, address: String?, port: Int?) {
-        data.withServers { servers ->
+    override suspend fun addServer(
+        name: String,
+        address: String?,
+        port: Int?,
+        ready: Boolean,
+        terminating: Boolean,
+    ) {
+        val changed = data.withServers { servers ->
             val index = servers.indexOfFirst { it.name == name }
             if (index == -1) {
-                servers.add(QueueServer(name, emptyList(), address = address, port = port))
+                servers.add(
+                    QueueServer(
+                        name = name,
+                        games = emptyList(),
+                        address = address,
+                        port = port,
+                        ready = ready,
+                        terminating = terminating,
+                    )
+                )
+                true
             } else {
                 // A server may be discovered before its address/port are known (or vice versa);
                 // keep whichever values we have.
                 val old = servers[index]
-                servers[index] = old.copy(address = address ?: old.address, port = port ?: old.port)
+                val updated = old.copy(
+                    address = address ?: old.address,
+                    port = port ?: old.port,
+                    ready = ready,
+                    terminating = terminating,
+                )
+                if (updated != old) {
+                    servers[index] = updated
+                    true
+                } else {
+                    false
+                }
             }
         }
-        applicationScope.launch { processQueue() }
+        if (changed) {
+            applicationScope.launch { processQueue() }
+        }
     }
 
     override suspend fun setServerDraining(name: String, draining: Boolean) {
-        data.withServers { servers ->
+        val changed = data.withServers { servers ->
+            var changed = false
             for ((i, server) in servers.withIndex()) {
                 if (server.name == name && server.draining != draining) {
                     servers[i] = server.copy(draining = draining)
+                    changed = true
                 }
             }
+            changed
+        }
+        if (changed) {
+            applicationScope.launch { processQueue() }
         }
     }
 
@@ -460,16 +504,20 @@ class QueueService @Inject constructor(
         data.withServers { servers ->
             for ((i, server) in servers.withIndex()) {
                 if (server.name == serverName) {
-                    val newList = server.games.toMutableList()
-                    newList.add(
-                        Game(
-                            gameId,
-                            gameType,
-                            gameState.maxSlots - gameState.openSlots,
-                            gameState.maxSlots,
-                            gameState.gameState
-                        )
+                    val newGame = Game(
+                        gameId,
+                        gameType,
+                        gameState.maxSlots - gameState.openSlots,
+                        gameState.maxSlots,
+                        gameState.gameState
                     )
+                    val newList = server.games.toMutableList()
+                    val existingIndex = newList.indexOfFirst { it.id == gameId }
+                    if (existingIndex == -1) {
+                        newList.add(newGame)
+                    } else {
+                        newList[existingIndex] = newGame
+                    }
                     servers[i] = server.copy(games = newList)
                 }
             }

@@ -25,9 +25,7 @@ interface IK8sServiceDiscovery {
     suspend fun getProxyIP(podName: String): String?
 
     /**
-     * Gets the pod IP address of a game server by its name
-     * This should be different from the Agones-provided IP
-     * address, because it is only accessible from inside the cluster.
+     * Gets the cluster-internal pod IP address of a game server by its name.
      */
     suspend fun getGameServerIP(serverName: String): String?
     fun getAllProxies(): List<String>
@@ -129,9 +127,7 @@ class K8sServiceDiscovery @Inject constructor(
     }
 
     /**
-     * Gets the pod IP address of a game server by its name
-     * This should be different from the Agones-provided IP
-     * address, because it is only accessible from inside the cluster.
+     * Gets the cluster-internal pod IP address of a game server by its name.
      */
     override suspend fun getGameServerIP(serverName: String): String? {
         return withContext(Dispatchers.IO) {

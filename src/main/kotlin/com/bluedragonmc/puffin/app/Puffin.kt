@@ -15,7 +15,7 @@ class Puffin {
         binder.bind(IGameServerManager::class.java).to(GameServerManager::class.java)
         binder.bind(IK8sServiceDiscovery::class.java).to(K8sServiceDiscovery::class.java)
         binder.bind(IMapService::class.java).to(MapService::class.java)
-        binder.bind(ServerVersionResolver::class.java).to(AgonesFleetVersionResolver::class.java)
+        binder.bind(ServerVersionResolver::class.java).to(DeploymentVersionResolver::class.java)
         binder.bind(IPartyManager::class.java).to(PartyManager::class.java)
         binder.bind(IPlayerTracker::class.java).to(PlayerTracker::class.java)
         binder.bind(IQueueService::class.java).to(QueueService::class.java)

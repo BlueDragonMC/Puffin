@@ -11,6 +11,18 @@ class PuffinConfig {
 
     val k8sNamespace = System.getenv("PUFFIN_K8S_NAMESPACE") ?: "default"
 
+    /** The Deployment that owns the game server pods. */
+    val gameServerDeploymentName = System.getenv("PUFFIN_GAMESERVER_DEPLOYMENT_NAME") ?: "server"
+
+    /** The label selector used to find game server pods. */
+    val gameServerLabelSelector = System.getenv("PUFFIN_GAMESERVER_LABEL_SELECTOR") ?: "app=server"
+
+    /** The Minecraft port exposed by each game server pod. */
+    val gameServerPort = System.getenv("PUFFIN_GAMESERVER_PORT")?.toIntOrNull() ?: 25565
+
+    /** The name of the game server container in the Deployment and pods. */
+    val gameServerContainerName = System.getenv("PUFFIN_GAMESERVER_CONTAINER_NAME") ?: "server"
+
     val worldsFolder = System.getenv("PUFFIN_WORLD_FOLDER") ?: "/puffin/worlds/"
 
     val mongoConnectionString = System.getenv("PUFFIN_MONGO_CONNECTION_STRING") ?: "mongodb://mongo:27017"

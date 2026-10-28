@@ -50,7 +50,7 @@ class ApiService @Inject constructor(
                 when (decoded.get("request").asString) {
                     "getGameServers" -> {
                         val gameServers = queueService.getServers().mapNotNull { gs ->
-                            gameServerManager.getK8sObject(gs.name)?.let { createJsonObjectForGameServer(it) }
+                            gameServerManager.getGameServer(gs.name)?.let { createJsonObjectForGameServer(it) }
                         }
                         val arr = JsonArray().apply {
                             gameServers.forEach { add(it) }
@@ -208,12 +208,14 @@ class ApiService @Inject constructor(
 
     private suspend fun createJsonObjectForGameServer(gs: GameServer): JsonObject {
         return JsonObject().apply {
-            if (gs is AgonesGameServer) {
-                add("raw", gs.`object`.raw)
+            if (gs is PodGameServer) {
+                add("raw", gs.raw)
             }
             addProperty("name", gs.name)
             addProperty("address", gs.address)
             addProperty("port", gs.port)
+            addProperty("ready", gs.ready)
+            addProperty("terminating", gs.terminating)
             addProperty("draining", queueService.getServer(gs.name)?.draining ?: false)
             val instances = JsonArray().apply {
                 queueService.getServer(gs.name)?.games?.forEach { game -> add(game.id) }
