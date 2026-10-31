@@ -41,6 +41,12 @@ class PuffinConfig {
     // The amount of milliseconds in between proxy syncs
     val k8sSyncPeriod = System.getenv("PUFFIN_K8S_SYNC_PERIOD_MS")?.toLongOrNull() ?: 10_000L
 
+    /** How long a pending proxy transfer is kept while the client reconnects. */
+    val transferTtlSeconds = System.getenv("PUFFIN_TRANSFER_TTL_SECONDS")?.toLongOrNull() ?: 60L
+
+    /** How long a queue destination is kept while a player connects to the target server. */
+    val destinationTtlSeconds = System.getenv("PUFFIN_DESTINATION_TTL_SECONDS")?.toLongOrNull() ?: 60L
+
     val grpcServerPort = System.getenv("PUFFIN_GRPC_PORT")?.toIntOrNull() ?: 50051
     val gsGrpcPort = System.getenv("PUFFIN_GAMESERVER_GRPC_PORT")?.toIntOrNull() ?: 50051
     val proxyGrpcPort = System.getenv("PUFFIN_PROXY_GRPC_PORT")?.toIntOrNull() ?: 50051

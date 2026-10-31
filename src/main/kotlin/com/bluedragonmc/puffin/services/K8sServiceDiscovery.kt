@@ -29,6 +29,16 @@ interface IK8sServiceDiscovery {
      */
     suspend fun getGameServerIP(serverName: String): String?
     fun getAllProxies(): List<String>
+
+    /**
+     * Gets the names of the proxy pods which are ready to accept new player connections.
+     */
+    fun getReadyProxies(): List<String>
+
+    /**
+     * Whether the given proxy pod is currently Ready and not being deleted.
+     */
+    fun isProxyReady(podName: String): Boolean
     suspend fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub?
     suspend fun getChannelToServer(serverName: String): ManagedChannel?
     suspend fun getChannelToProxy(proxyPodName: String): ManagedChannel?
@@ -75,6 +85,9 @@ class K8sServiceDiscovery @Inject constructor(
     @Volatile
     private var proxyPodNames = listOf<String>()
 
+    @Volatile
+    private var readyProxyPodNames = listOf<String>()
+
     private val proxyPlayerListeners =
         mutableListOf<suspend (podName: String, response: PlayerHolderOuterClass.GetPlayersResponse) -> Unit>()
 
@@ -86,8 +99,15 @@ class K8sServiceDiscovery @Inject constructor(
 
     override suspend fun periodicSync() {
         val podList = withContext(Dispatchers.IO) { getProxies() }
-        val proxies = podList.items.mapNotNull { it.metadata?.name }
+        val proxyPods = podList.items
+        val proxies = proxyPods.mapNotNull { it.metadata?.name }
         proxyPodNames = proxies
+        readyProxyPodNames = proxyPods
+            .filter { pod ->
+                pod.metadata?.deletionTimestamp == null &&
+                        pod.status?.conditions?.any { it.type == "Ready" && it.status == "True" } == true
+            }
+            .mapNotNull { it.metadata?.name }
 
         proxies.forEach { podName ->
             applicationScope.launch {
@@ -139,6 +159,10 @@ class K8sServiceDiscovery @Inject constructor(
     }
 
     override fun getAllProxies(): List<String> = proxyPodNames
+
+    override fun getReadyProxies(): List<String> = readyProxyPodNames
+
+    override fun isProxyReady(podName: String): Boolean = podName in readyProxyPodNames
 
 
     override suspend fun getStubToServer(serverName: String): GsClientServiceGrpcKt.GsClientServiceCoroutineStub? {

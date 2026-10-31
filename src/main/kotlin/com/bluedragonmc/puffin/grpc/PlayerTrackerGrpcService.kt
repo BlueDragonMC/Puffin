@@ -33,6 +33,17 @@ class PlayerTrackerGrpcService @Inject constructor(
     override suspend fun playerLogout(request: PlayerTrackerOuterClass.PlayerLogoutRequest): Empty = handleRPC {
         // Called when a player logs out of or otherwise disconnects from a proxy.
         val uuid = UUID.fromString(request.uuid)
+
+        val currentState = playerTracker.getPlayer(uuid)
+        if (request.proxyPodName.isNotBlank() &&
+            currentState?.proxyPodName != null &&
+            currentState.proxyPodName != request.proxyPodName
+        ) {
+            // If the player switches proxies, and the login message from the new proxy arrives
+            // before the logout message from the old proxy, ignore the logout message - by now, it's outdated.
+            return@handleRPC Empty.getDefaultInstance()
+        }
+
         val oldState = playerTracker.handleLogout(uuid)
         logger.info("Logout > ${request.username} $oldState")
         databaseConnection.evictCachesForPlayer(uuid)

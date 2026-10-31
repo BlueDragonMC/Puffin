@@ -6,6 +6,7 @@ import com.bluedragonmc.api.grpc.GsClient
 import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
 import com.bluedragonmc.api.grpc.sendPlayerRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
+import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
@@ -88,6 +89,7 @@ class QueueService @Inject constructor(
     private val mapService: IMapService,
     private val playerTracker: IPlayerTracker,
     private val k8sServiceDiscovery: IK8sServiceDiscovery,
+    private val config: PuffinConfig,
     private val applicationScope: ApplicationScope
 ) : Service(), IQueueService {
 
@@ -528,7 +530,7 @@ class QueueService @Inject constructor(
     override suspend fun getGames() = data.withServers { servers -> servers.flatMap { it.games } }
 
     private val destinationCache = Caffeine.newBuilder()
-        .expireAfterWrite(Duration.ofSeconds(10))
+        .expireAfterWrite(Duration.ofSeconds(config.destinationTtlSeconds.coerceAtLeast(1)))
         .build<UUID, String>()
 
     override fun setDestination(player: UUID, gameId: String) {
@@ -542,17 +544,21 @@ class QueueService @Inject constructor(
     }
 
     override suspend fun sendPlayerToInstance(player: UUID, gameId: String) {
-        val currentGameServer = playerTracker.getPlayer(player)?.gameServerName
+        val playerState = playerTracker.getPlayer(player)
+        val currentGameServer = playerState?.gameServerName
+        val currentProxy = playerState?.proxyPodName
 
         val serverName = getServerOfGame(gameId)!!
 
-        val channel = if (currentGameServer != serverName) {
-            // Send to the proxy if we're routing the player between game servers
+        // Route same-server instance changes through the proxy when the proxy is
+        // draining, so that it can force the player to reconnect via a transfer packet.
+        val routeViaProxy = currentGameServer != serverName ||
+                (currentProxy != null && !k8sServiceDiscovery.isProxyReady(currentProxy))
+
+        val channel = if (routeViaProxy) {
             logger.info("Setting destination of player '$player' to game '$gameId'")
             setDestination(player, gameId)
-            playerTracker.getPlayer(player)?.proxyPodName?.let {
-                k8sServiceDiscovery.getChannelToProxy(it)
-            }
+            currentProxy?.let { k8sServiceDiscovery.getChannelToProxy(it) }
         } else {
             playerTracker.getChannelToPlayer(player) // Send directly to the game server if we're routing the player between instances on the same server
         } ?: run {
@@ -577,6 +583,7 @@ class QueueService @Inject constructor(
             this.serverName = serverName
             this.gameServerIp = address
             this.gameServerPort = port
+            this.gameServerGrpcPort = config.gsGrpcPort
             this.instanceId = gameId
         })
     }

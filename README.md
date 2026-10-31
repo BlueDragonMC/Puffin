@@ -36,6 +36,8 @@ Environment variables:
 | `PUFFIN_LOBBY_GAME_NAME`            | The name of the game type used for lobbies.                                                                 | Lobby                      |
 | `PUFFIN_GS_SYNC_PERIOD_MS`          | The amount of milliseconds in between game server syncs                                                     | 10000                      |
 | `PUFFIN_K8S_SYNC_PERIOD_MS`         | The amount of milliseconds in between proxy syncs                                                           | 10000                      |
+| `PUFFIN_TRANSFER_TTL_SECONDS`       | How long a pending proxy transfer is kept while the client reconnects.                                      | 60                         |
+| `PUFFIN_DESTINATION_TTL_SECONDS`    | How long a queue destination is kept while the player connects to the target server.                        | 60                         |
 | `PUFFIN_GAMESERVER_GRPC_PORT`       | The port used to create gRPC channels to game servers                                                       | 50051                      |
 | `PUFFIN_PROXY_GRPC_PORT`            | The port used to create gRPC channels to proxy servers                                                      | 50051                      |
 | `PUFFIN_API_PORT`                   | The port used for the dashboard WebSocket API.                                                              | 8080                       |
@@ -63,6 +65,7 @@ Puffin is composed of many different services:
 | MapService            | Serves map data and configs to game servers over HTTP and gRPC.                                                           |
 | PartyManager          | Handles creating parties, party chat, invitations, warps, transfers, and marathons.                                       |
 | PlayerTracker         | Maintains a map of players' UUIDs to their current games, servers, and proxies.                                           |
+| PlayerTransferService | Stores pending proxy handoffs so a replacement proxy can route a transferred player to the right game server.              |
 | PrivateMessageService | Sends private messages (i.e. /msg) to players on other servers.                                                           |
 | QueueService          | Manages games and instances, and sends queued players to the best available game.                                         |
 | ServerVersionResolver | Determines whether a game server is running an outdated version so that it can be drained.                                |

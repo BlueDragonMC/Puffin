@@ -19,6 +19,7 @@ class Puffin {
         binder.bind(IPartyManager::class.java).to(PartyManager::class.java)
         binder.bind(IPlayerTracker::class.java).to(PlayerTracker::class.java)
         binder.bind(IQueueService::class.java).to(QueueService::class.java)
+        binder.bind(IPlayerTransferService::class.java).to(PlayerTransferService::class.java)
     }
 
     fun initialize() {

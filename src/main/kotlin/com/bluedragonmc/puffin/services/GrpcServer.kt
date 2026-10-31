@@ -20,6 +20,7 @@ class GrpcServer @Inject constructor(
     private val playerTrackerGrpcService: PlayerTrackerGrpcService,
     private val velocityMessageGrpcService: VelocityMessageGrpcService,
     private val jukeboxGrpcService: JukeboxGrpcService,
+    private val playerTransferGrpcService: PlayerTransferGrpcService,
     private val config: PuffinConfig,
 ) : Service() {
 
@@ -36,6 +37,7 @@ class GrpcServer @Inject constructor(
             .addService(playerTrackerGrpcService)
             .addService(velocityMessageGrpcService)
             .addService(jukeboxGrpcService)
+            .addService(playerTransferGrpcService)
             .addService(ProtoReflectionServiceV1.newInstance())
             .build()
 
