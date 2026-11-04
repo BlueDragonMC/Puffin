@@ -17,6 +17,7 @@ repositories {
 val grpcKotlinVersion = "1.4.1"
 val protoVersion = "4.30.1"
 val grpcVersion = "1.71.0"
+val mongodbVersion = "5.14.0"
 
 dependencies {
     testImplementation(kotlin("test"))
@@ -26,8 +27,8 @@ dependencies {
 
     implementation("io.kubernetes:client-java:26.0.0")
 
-    implementation("org.litote.kmongo:kmongo:5.2.1")
-    implementation("org.litote.kmongo:kmongo-coroutine:5.2.1")
+    implementation("org.mongodb:mongodb-driver-kotlin-coroutine:$mongodbVersion")
+    implementation("org.mongodb:bson-kotlinx:$mongodbVersion")
 
     implementation("com.google.inject:guice:7.0.0:classes")
     implementation("org.ow2.asm:asm:9.9.1")

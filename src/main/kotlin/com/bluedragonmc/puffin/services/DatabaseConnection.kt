@@ -11,21 +11,23 @@ import com.google.inject.Singleton
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.client.model.Filters
+import com.mongodb.client.model.UpdateOptions
+import com.mongodb.client.model.Updates
 import com.mongodb.client.result.UpdateResult
+import com.mongodb.kotlin.client.coroutine.MongoClient
+import com.mongodb.kotlin.client.coroutine.MongoCollection
+import com.mongodb.kotlin.client.coroutine.MongoDatabase
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.bson.BsonDocument
 import org.bson.Document
 import org.bson.conversions.Bson
-import org.litote.kmongo.coroutine.CoroutineClient
-import org.litote.kmongo.coroutine.CoroutineCollection
-import org.litote.kmongo.coroutine.CoroutineDatabase
-import org.litote.kmongo.coroutine.coroutine
-import org.litote.kmongo.reactivestreams.KMongo
-import org.litote.kmongo.upsert
 import java.io.File
 import java.time.Duration
 import java.util.*
@@ -37,16 +39,16 @@ import java.util.concurrent.TimeUnit
 @Singleton
 class DatabaseConnection @Inject constructor(private val config: PuffinConfig) : Service() {
 
-    private val mongoClient: CoroutineClient
+    private val mongoClient: MongoClient
     private val httpClient: OkHttpClient
 
     private val cacheControl = CacheControl.Builder().maxAge(30, TimeUnit.SECONDS).build()
     private val gson = Gson()
 
-    private val db: CoroutineDatabase
-    private val playersCollection: CoroutineCollection<Document>
-    private val mapDataCollection: CoroutineCollection<MapData>
-    private val mapConfigCollection: CoroutineCollection<Document>
+    private val db: MongoDatabase
+    private val playersCollection: MongoCollection<Document>
+    private val mapDataCollection: MongoCollection<MapData>
+    private val mapConfigCollection: MongoCollection<Document>
 
     private val builder = Caffeine.newBuilder()
         .maximumSize(10_000)
@@ -73,7 +75,7 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
 
     suspend fun getPlayerName(uuid: UUID): String? {
         usernameCache.getIfPresent(uuid)?.let { return it }
-        val username = playersCollection.findOneById(uuid.toString())?.getString("username")
+        val username = playersCollection.find(Filters.eq("_id", uuid.toString())).firstOrNull()?.getString("username")
         if (username != null) usernameCache.put(uuid, username)
         return username
     }
@@ -81,23 +83,27 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
     suspend fun getPlayerUUID(username: String): UUID? {
         val key = username.lowercase()
         uuidCache.getIfPresent(key)?.let { return it }
-        val uuid = playersCollection.findOne(Filters.eq("usernameLower", username))?.getString("_id")
+        val uuid = playersCollection.find(Filters.eq("usernameLower", username)).firstOrNull()?.getString("_id")
             ?.let { UUID.fromString(it) }
         if (uuid != null) uuidCache.put(key, uuid)
         return uuid
     }
 
     suspend fun getMapData(id: String) =
-        mapDataCollection.findOneById(id)?.data
+        mapDataCollection.find(Filters.eq("_id", id)).firstOrNull()?.data
 
     suspend fun putMapData(id: String, data: ByteArray) =
-        mapDataCollection.updateOneById(id = id, update = MapData(data), options = upsert())
+        mapDataCollection.updateOne(
+            filter = Filters.eq("_id", id),
+            update = Updates.set("data", data),
+            options = UpdateOptions().upsert(true)
+        )
 
     suspend fun putMapConfig(id: String, data: String): UpdateResult =
         mapConfigCollection.updateOne(
             filter = Filters.eq("_id", id),
             update = Document("\$set", Document.parse(data)),
-            options = upsert()
+            options = UpdateOptions().upsert(true)
         )
 
     suspend fun getAvailableMaps(gameName: String?, mode: String?, mapId: String?, whitelistedPlayers: Iterable<UUID>?): List<CommonTypes.MapSource> {
@@ -122,7 +128,12 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
             )
         }
 
-        val docs = mapConfigCollection.find(*filters.toTypedArray()).toList()
+        val filter = when (filters.size) {
+            0 -> BsonDocument()
+            1 -> filters.first()
+            else -> Filters.and(filters)
+        }
+        val docs = mapConfigCollection.find(filter).toList()
 
         return docs.map { doc -> createMapSourceFromDocument(doc) }
     }
@@ -156,14 +167,14 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
             }
             .build()
 
-        mongoClient = KMongo.createClient(MongoClientSettings.builder()
+        mongoClient = MongoClient.create(MongoClientSettings.builder()
             .applyConnectionString(ConnectionString(config.mongoConnectionString))
             .applyToSocketSettings { block ->
                 block.connectTimeout(5, TimeUnit.SECONDS)
             }.applyToClusterSettings { block ->
                 block.serverSelectionTimeout(5, TimeUnit.SECONDS)
             }.build()
-        ).coroutine
+        )
 
         db = mongoClient.getDatabase("bluedragon")
 
