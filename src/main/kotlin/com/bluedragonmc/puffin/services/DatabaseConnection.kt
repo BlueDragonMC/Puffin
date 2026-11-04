@@ -27,6 +27,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.bson.BsonDocument
 import org.bson.Document
+import org.bson.codecs.kotlinx.ByteArrayAsBsonBinary
 import org.bson.conversions.Bson
 import java.io.File
 import java.time.Duration
@@ -197,5 +198,7 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
     }
 
     @Serializable
-    data class MapData(val data: ByteArray)
+    data class MapData(
+        @Serializable(with = ByteArrayAsBsonBinary::class) val data: ByteArray
+    )
 }
