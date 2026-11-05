@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "2.4.21"
-    kotlin("plugin.serialization") version "2.4.21"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
     application
 }
 
@@ -13,58 +13,55 @@ repositories {
     maven(url = "https://reposilite.bluedragonmc.com/releases")
 }
 
-val grpcKotlinVersion = "1.4.1"
-val protoVersion = "4.30.1"
-val grpcVersion = "1.71.0"
-val mongodbVersion = "5.14.0"
-
 dependencies {
     testImplementation(kotlin("test"))
 
-    implementation("ch.qos.logback:logback:0.5")
-    implementation("ch.qos.logback:logback-classic:1.5.17")
+    implementation(libs.logback)
+    implementation(libs.logback.classic)
 
-    implementation("io.kubernetes:client-java:26.0.0")
+    implementation(libs.kubernetes.client.java)
 
-    implementation("org.mongodb:mongodb-driver-kotlin-coroutine:$mongodbVersion")
-    implementation("org.mongodb:bson-kotlinx:$mongodbVersion")
+    implementation(libs.mongodb.kotlin.coroutine)
+    implementation(libs.bson.kotlinx)
 
-    implementation("com.google.inject:guice:7.0.0:classes")
-    implementation("org.ow2.asm:asm:9.9.1")
-    implementation("com.github.ben-manes.caffeine:caffeine:3.2.0")
+    implementation(variantOf(libs.guice) { classifier("classes") })
+    implementation(libs.asm)
+    implementation(libs.caffeine)
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+    implementation(libs.serialization.json)
 
-    implementation("com.bluedragonmc:rpc:2026-10-31-015108b")
+    implementation(libs.rpc)
 //    implementation("com.bluedragonmc:rpc:dev")
-    implementation("com.github.java-json-tools:json-patch:1.13")
+    implementation(libs.json.patch)
 
-    implementation("io.grpc:grpc-services:$grpcVersion")
-    implementation("io.grpc:grpc-netty:$grpcVersion")
-    implementation("io.grpc:grpc-stub:$grpcVersion")
-    implementation("io.grpc:grpc-kotlin-stub:$grpcKotlinVersion")
-    implementation("com.google.protobuf:protobuf-kotlin:$protoVersion")
+    implementation(libs.grpc.services)
+    implementation(libs.grpc.netty)
+    implementation(libs.grpc.stub)
+    implementation(libs.grpc.kotlin.stub)
+    implementation(libs.protobuf.kotlin)
 
-    implementation("org.java-websocket:Java-WebSocket:1.6.0")
+    implementation(libs.java.websocket)
 
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation(libs.okhttp)
 
-    implementation("org.spongepowered:configurate-yaml:4.2.0")
+    implementation(libs.configurate.yaml)
 }
 
 tasks.test {
     useJUnitPlatform()
 }
 
+val javaVersion = libs.versions.jvm.get().toInt()
+
 kotlin {
     jvmToolchain {
-        languageVersion.set(JavaLanguageVersion.of(25))
+        languageVersion.set(JavaLanguageVersion.of(javaVersion))
     }
 }
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(25))
+        languageVersion.set(JavaLanguageVersion.of(javaVersion))
     }
 }
 

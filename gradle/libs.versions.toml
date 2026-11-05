@@ -1,0 +1,45 @@
+[versions]
+# @keep Used by the build script for the Java toolchain
+jvm = "25"
+kotlin = "2.4.21"
+logback = "0.5"
+logback-classic = "1.5.17"
+kubernetes = "26.0.0"
+mongodb = "5.14.0"
+guice = "7.0.0"
+asm = "9.9.1"
+caffeine = "3.2.0"
+serialization = "1.8.0"
+rpc = "2026-10-31-015108b"
+json-patch = "1.13"
+grpc = "1.71.0"
+grpc-kotlin-stub = "1.4.1"
+protobuf = "4.30.1"
+java-websocket = "1.6.0"
+okhttp = "4.12.0"
+configurate = "4.2.0"
+
+[libraries]
+logback = { group = "ch.qos.logback", name = "logback", version.ref = "logback" }
+logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.ref = "logback-classic" }
+kubernetes-client-java = { group = "io.kubernetes", name = "client-java", version.ref = "kubernetes" }
+mongodb-kotlin-coroutine = { group = "org.mongodb", name = "mongodb-driver-kotlin-coroutine", version.ref = "mongodb" }
+bson-kotlinx = { group = "org.mongodb", name = "bson-kotlinx", version.ref = "mongodb" }
+guice = { group = "com.google.inject", name = "guice", version.ref = "guice" }
+asm = { group = "org.ow2.asm", name = "asm", version.ref = "asm" }
+caffeine = { group = "com.github.ben-manes.caffeine", name = "caffeine", version.ref = "caffeine" }
+serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+rpc = { group = "com.bluedragonmc", name = "rpc", version.ref = "rpc" }
+json-patch = { group = "com.github.java-json-tools", name = "json-patch", version.ref = "json-patch" }
+grpc-services = { group = "io.grpc", name = "grpc-services", version.ref = "grpc" }
+grpc-netty = { group = "io.grpc", name = "grpc-netty", version.ref = "grpc" }
+grpc-stub = { group = "io.grpc", name = "grpc-stub", version.ref = "grpc" }
+grpc-kotlin-stub = { group = "io.grpc", name = "grpc-kotlin-stub", version.ref = "grpc-kotlin-stub" }
+protobuf-kotlin = { group = "com.google.protobuf", name = "protobuf-kotlin", version.ref = "protobuf" }
+java-websocket = { group = "org.java-websocket", name = "Java-WebSocket", version.ref = "java-websocket" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+configurate-yaml = { group = "org.spongepowered", name = "configurate-yaml", version.ref = "configurate" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
