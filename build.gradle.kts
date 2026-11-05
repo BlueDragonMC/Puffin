@@ -1,7 +1,6 @@
 plugins {
     kotlin("jvm") version "2.1.10"
     kotlin("plugin.serialization") version "2.3.0"
-    id("com.gradleup.shadow") version "9.0.1"
     application
 }
 
@@ -69,11 +68,6 @@ java {
     }
 }
 
-tasks.shadowJar {
-    duplicatesStrategy = DuplicatesStrategy.INCLUDE
-    mergeServiceFiles()
-}
-
 application {
     mainClass.set("com.bluedragonmc.puffin.app.MainKt")
 }
@@ -82,4 +76,19 @@ tasks.jar {
     manifest {
         attributes["Main-Class"] = "com.bluedragonmc.puffin.app.MainKt"
     }
+}
+
+
+val installThinDistLibs by tasks.registering(Sync::class) {
+    dependsOn(configurations.named("runtimeClasspath"))
+    into(layout.buildDirectory.dir("thin-dist/lib"))
+    from(configurations.named("runtimeClasspath").map { configuration ->
+        configuration.files.filter { file -> file.isFile && file.name.endsWith(".jar") }
+    })
+}
+
+val installThinDist by tasks.registering(Copy::class) {
+    dependsOn(tasks.jar, installThinDistLibs)
+    into(layout.buildDirectory.dir("thin-dist"))
+    from(tasks.jar)
 }

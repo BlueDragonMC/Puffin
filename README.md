@@ -13,7 +13,7 @@ See the [deployment guides](https://developer.bluedragonmc.com/deployment/kubern
 - Clone: `git clone https://github.com/BlueDragonMC/Puffin.git`
 - Configure: see guide below
 - Build: `./gradlew build`
-- Run: `java -jar build/libs/Puffin-x.x.x-all.jar`
+- Run: `./gradlew run`
 
 Puffin is built and run with JDK 25.
 
