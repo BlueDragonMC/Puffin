@@ -275,6 +275,8 @@ class QueueService @Inject constructor(
             val effectivePlayerCounts = mutableMapOf<String, Int>()
             val effectiveGames = ArrayList(games)
             val mapSources = mutableListOf<CommonTypes.MapSource>()
+            // Map of (Game that is going to be created) -> (List of parties that will join that game once it's created)
+            val newGameParties = mutableListOf<Pair<Game, MutableList<QueuedParty>>>()
 
             fun sendPartyToInstance(party: QueuedParty, game: Game) {
                 logger.info("Sending queued party $party to game ${game.id}.")
@@ -290,10 +292,12 @@ class QueueService @Inject constructor(
             removeAllParties { party ->
                 party.attempts++
                 if (party.attempts > QUEUE_PARTY_MAX_ATTEMPTS) {
-                    playerTracker.sendChatAsync(
-                        party.players,
+                    val message = if (party.creationFailed) {
+                        "<red><lang:queue.adding.failed:'${party.gameType.name}':'<lang:queue.adding.failed.instance_creation>'>"
+                    } else {
                         "<red><lang:queue.removed.reason:'<lang:queue.removed.reason.timeout>'>"
-                    )
+                    }
+                    playerTracker.sendChatAsync(party.players, message)
                     return@removeAllParties true
                 }
                 val startingGame = effectiveGames.firstOrNull { game ->
@@ -334,6 +338,7 @@ class QueueService @Inject constructor(
                     effectivePlayerCounts[initializingGame.id] = effectivePlayerCounts.getOrDefault(
                         initializingGame.id, initializingGame.playerCount
                     ) + party.players.size
+                    newGameParties.firstOrNull { it.first === initializingGame }?.second?.add(party)
                 } else {
                     // Find a map that satisfies the party's requests and has all of its players whitelisted
                     val mapSource = mapService.getAvailableMaps(
@@ -351,8 +356,10 @@ class QueueService @Inject constructor(
                         return@removeAllParties true
                     }
 
-                    effectiveGames += Game("", party.gameType, party.players.size, 8, EnumGameState.INITIALIZING)
+                    val newGame = Game("", party.gameType, party.players.size, 8, EnumGameState.INITIALIZING)
+                    effectiveGames += newGame
                     mapSources += mapSource
+                    newGameParties += newGame to mutableListOf(party)
                 }
                 return@removeAllParties false
             }
@@ -364,6 +371,7 @@ class QueueService @Inject constructor(
             placementServers.forEach { server -> effectiveGameCounts[server.name] = server.games.size }
             newGames.forEachIndexed { i, game ->
                 val mapSource = mapSources[i]
+                val waitingParties = newGameParties.firstOrNull { it.first === game }?.second.orEmpty()
                 val id = effectiveGameCounts.minByOrNull { it.value }?.key
                 if (id == null) {
                     logger.warn("No game servers are available to create an instance for ${game.gameType}; will retry.")
@@ -374,16 +382,31 @@ class QueueService @Inject constructor(
                     logger.info("Creating instance with game type ${game.gameType} on server $id.")
                     val stub = k8sServiceDiscovery.getStubToServer(id) ?: run {
                         logger.warn("Couldn't get a channel to server $id to create an instance; will retry.")
+                        waitingParties.forEach { it.creationFailed = true }
                         return@launch
                     }
-                    stub.withDeadline(Deadline.after(5, TimeUnit.SECONDS))
-                        .createInstance(
-                            GsClient.CreateInstanceRequest.newBuilder()
-                                .setGame(game.gameType.name)
-                                .setMapSource(mapSource)
-                                .apply { if (game.gameType.hasMode()) setMode(game.gameType.mode) }
-                                .build()
+                    try {
+                        val response = stub.withDeadline(Deadline.after(5, TimeUnit.SECONDS))
+                            .createInstance(
+                                GsClient.CreateInstanceRequest.newBuilder()
+                                    .setGame(game.gameType.name)
+                                    .setMapSource(mapSource)
+                                    .apply { if (game.gameType.hasMode()) setMode(game.gameType.mode) }
+                                    .build()
+                            )
+                        if (!response.success) {
+                            logger.warn(
+                                "Server $id rejected instance creation for game type ${game.gameType}; will retry."
+                            )
+                        }
+                        waitingParties.forEach { it.creationFailed = !response.success }
+                    } catch (e: Exception) {
+                        logger.warn(
+                            "Failed to create instance with game type ${game.gameType} on server $id; will retry.",
+                            e
                         )
+                        waitingParties.forEach { it.creationFailed = true }
+                    }
                 }
             }
             jobs.joinAll()

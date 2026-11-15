@@ -84,6 +84,9 @@ data class QueuedParty(
     val players: List<UUID>, val gameType: CommonTypes.GameType
 ) {
     var attempts = 0
+
+    /** Whether the most recent attempt to create a game for this party failed. */
+    var creationFailed = false
 }
 
 /**
