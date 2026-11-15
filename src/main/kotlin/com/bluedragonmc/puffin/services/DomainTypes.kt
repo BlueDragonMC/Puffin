@@ -83,10 +83,17 @@ data class Game(
 data class QueuedParty(
     val players: List<UUID>, val gameType: CommonTypes.GameType
 ) {
-    var attempts = 0
+    /** Time (epoch milliseconds) when the party was added to the queue. */
+    val queuedAt = System.currentTimeMillis()
 
-    /** Whether the most recent attempt to create a game for this party failed. */
-    var creationFailed = false
+    /** The number of consecutive failed game creation attempts. */
+    var failedCreationAttempts = 0
+
+    /**
+     * The time (epoch milliseconds) that a new game is allowed to be created for this party.
+     * It is set to a time in the future if game creation fails for this party.
+     */
+    var nextCreationAttemptAt = 0L
 }
 
 /**

@@ -38,9 +38,21 @@ private const val QUEUE_LOOP_RATE_LIMIT = 1
 private const val QUEUE_LOOP_RATE_LIMIT_PERIOD_MS: Long = 1_000
 
 /**
- * The maximum number of queue cycles that a party will remain in the queue for before being removed.
+ * The maximum number of failed game creation attempts before a party is removed from the queue.
  */
-private const val QUEUE_PARTY_MAX_ATTEMPTS = 5
+private const val MAX_GAME_CREATION_ATTEMPTS = 3
+
+/** The minimum delay before retrying a failed game creation. */
+private const val GAME_CREATION_RETRY_BASE_DELAY_MS = 3_000L
+
+/** The maximum delay before retrying a failed game creation. */
+private const val GAME_CREATION_RETRY_MAX_DELAY_MS = 30_000L
+
+/** The amount of time to wait between sending game creation requests for the same party. */
+private const val GAME_CREATION_WAIT_MS = 10_000L
+
+/** How long a party may remain in the queue before it is removed. */
+private const val QUEUE_TIMEOUT_MS = 60_000L
 
 /**
  * Chooses which game servers new games may be created on.
@@ -139,6 +151,14 @@ class QueueService @Inject constructor(
                 serverNames = servers.mapTo(mutableSetOf()) { it.name },
                 gameIds = servers.flatMapTo(mutableSetOf()) { server -> server.games.map { it.id } }
             )
+        }
+
+        applicationScope.repeatingTask(
+            name = "Queue processing",
+            initialDelayMillis = QUEUE_LOOP_RATE_LIMIT_PERIOD_MS,
+            periodMillis = QUEUE_LOOP_RATE_LIMIT_PERIOD_MS
+        ) {
+            processQueue()
         }
     }
 
@@ -277,6 +297,7 @@ class QueueService @Inject constructor(
             val mapSources = mutableListOf<CommonTypes.MapSource>()
             // Map of (Game that is going to be created) -> (List of parties that will join that game once it's created)
             val newGameParties = mutableListOf<Pair<Game, MutableList<QueuedParty>>>()
+            val now = System.currentTimeMillis()
 
             fun sendPartyToInstance(party: QueuedParty, game: Game) {
                 logger.info("Sending queued party $party to game ${game.id}.")
@@ -290,16 +311,6 @@ class QueueService @Inject constructor(
             }
 
             removeAllParties { party ->
-                party.attempts++
-                if (party.attempts > QUEUE_PARTY_MAX_ATTEMPTS) {
-                    val message = if (party.creationFailed) {
-                        "<red><lang:queue.adding.failed:'${party.gameType.name}':'<lang:queue.adding.failed.instance_creation>'>"
-                    } else {
-                        "<red><lang:queue.removed.reason:'<lang:queue.removed.reason.timeout>'>"
-                    }
-                    playerTracker.sendChatAsync(party.players, message)
-                    return@removeAllParties true
-                }
                 val startingGame = effectiveGames.firstOrNull { game ->
                     gameMatches(
                         game,
@@ -326,6 +337,26 @@ class QueueService @Inject constructor(
                     return@removeAllParties true
                 }
 
+                if (party.failedCreationAttempts >= MAX_GAME_CREATION_ATTEMPTS) {
+                    logger.warn(
+                        "Removing party ${party.players} from the queue after " +
+                                "${party.failedCreationAttempts} failed creation attempts."
+                    )
+                    playerTracker.sendChatAsync(
+                        party.players,
+                        "<red><lang:queue.adding.failed:'${party.gameType.name}':'<lang:queue.adding.failed.instance_creation>'>"
+                    )
+                    return@removeAllParties true
+                }
+
+                if (now - party.queuedAt >= QUEUE_TIMEOUT_MS) {
+                    playerTracker.sendChatAsync(
+                        party.players,
+                        "<red><lang:queue.removed.reason:'<lang:queue.removed.reason.timeout>'>"
+                    )
+                    return@removeAllParties true
+                }
+
                 val initializingGame = effectiveGames.firstOrNull { game ->
                     gameMatches(
                         game,
@@ -339,28 +370,34 @@ class QueueService @Inject constructor(
                         initializingGame.id, initializingGame.playerCount
                     ) + party.players.size
                     newGameParties.firstOrNull { it.first === initializingGame }?.second?.add(party)
-                } else {
-                    // Find a map that satisfies the party's requests and has all of its players whitelisted
-                    val mapSource = mapService.getAvailableMaps(
-                        party.gameType.name,
-                        if (party.gameType.hasMode()) party.gameType.mode else null,
-                        if (party.gameType.hasMapId()) party.gameType.mapId else null,
-                        party.players
-                    ).randomOrNull()
-
-                    if (mapSource == null) {
-                        playerTracker.sendChatAsync(
-                            party.players,
-                            "<red><lang:queue.removed.reason:'<lang:queue.adding.failed.invalid_map>'>"
-                        )
-                        return@removeAllParties true
-                    }
-
-                    val newGame = Game("", party.gameType, party.players.size, 8, EnumGameState.INITIALIZING)
-                    effectiveGames += newGame
-                    mapSources += mapSource
-                    newGameParties += newGame to mutableListOf(party)
+                    return@removeAllParties false
                 }
+
+                if (now < party.nextCreationAttemptAt) {
+                    // We need to wait longer before creating another new game for this party
+                    return@removeAllParties false
+                }
+
+                // Find a map that satisfies the party's requests and has all of its players whitelisted
+                val mapSource = mapService.getAvailableMaps(
+                    party.gameType.name,
+                    if (party.gameType.hasMode()) party.gameType.mode else null,
+                    if (party.gameType.hasMapId()) party.gameType.mapId else null,
+                    party.players
+                ).randomOrNull()
+
+                if (mapSource == null) {
+                    playerTracker.sendChatAsync(
+                        party.players,
+                        "<red><lang:queue.removed.reason:'<lang:queue.adding.failed.invalid_map>'>"
+                    )
+                    return@removeAllParties true
+                }
+
+                val newGame = Game("", party.gameType, party.players.size, 8, EnumGameState.INITIALIZING)
+                effectiveGames += newGame
+                mapSources += mapSource
+                newGameParties += newGame to mutableListOf(party)
                 return@removeAllParties false
             }
 
@@ -372,17 +409,24 @@ class QueueService @Inject constructor(
             newGames.forEachIndexed { i, game ->
                 val mapSource = mapSources[i]
                 val waitingParties = newGameParties.firstOrNull { it.first === game }?.second.orEmpty()
+                val requestTime = System.currentTimeMillis()
                 val id = effectiveGameCounts.minByOrNull { it.value }?.key
                 if (id == null) {
                     logger.warn("No game servers are available to create an instance for ${game.gameType}; will retry.")
+                    waitingParties.forEach {
+                        it.nextCreationAttemptAt = requestTime + GAME_CREATION_RETRY_BASE_DELAY_MS
+                    }
                     return@forEachIndexed
                 }
                 effectiveGameCounts[id] = effectiveGameCounts[id]!! + 1
+                waitingParties.forEach {
+                    it.nextCreationAttemptAt = requestTime + GAME_CREATION_WAIT_MS
+                }
                 jobs += applicationScope.launch {
                     logger.info("Creating instance with game type ${game.gameType} on server $id.")
                     val stub = k8sServiceDiscovery.getStubToServer(id) ?: run {
                         logger.warn("Couldn't get a channel to server $id to create an instance; will retry.")
-                        waitingParties.forEach { it.creationFailed = true }
+                        recordCreationFailure(waitingParties)
                         return@launch
                     }
                     try {
@@ -394,23 +438,50 @@ class QueueService @Inject constructor(
                                     .apply { if (game.gameType.hasMode()) setMode(game.gameType.mode) }
                                     .build()
                             )
-                        if (!response.success) {
+                        if (response.success) {
+                            recordCreationSuccess(waitingParties)
+                        } else {
                             logger.warn(
                                 "Server $id rejected instance creation for game type ${game.gameType}; will retry."
                             )
+                            recordCreationFailure(waitingParties)
                         }
-                        waitingParties.forEach { it.creationFailed = !response.success }
                     } catch (e: Exception) {
                         logger.warn(
                             "Failed to create instance with game type ${game.gameType} on server $id; will retry.",
                             e
                         )
-                        waitingParties.forEach { it.creationFailed = true }
+                        recordCreationFailure(waitingParties)
                     }
                 }
             }
             jobs.joinAll()
         }
+    }
+
+    private fun recordCreationFailure(parties: Collection<QueuedParty>) {
+        val now = System.currentTimeMillis()
+        parties.forEach { party ->
+            party.failedCreationAttempts++
+            party.nextCreationAttemptAt = now + creationRetryDelay(party.failedCreationAttempts)
+        }
+    }
+
+    private fun recordCreationSuccess(parties: Collection<QueuedParty>) {
+        val now = System.currentTimeMillis()
+        parties.forEach { party ->
+            party.failedCreationAttempts = 0
+            // This method is called right after the game creation request RPC returns successfully, but there might still be
+            // some time before Puffin receives the InstanceService.CreateInstance RPC. In that time, the game isn't joinable,
+            // so prevent new games from being created for this party for a few seconds while we wait.
+            party.nextCreationAttemptAt = now + GAME_CREATION_WAIT_MS
+        }
+    }
+
+    private fun creationRetryDelay(failedAttempts: Int): Long {
+        val exponent = (failedAttempts - 1).coerceAtLeast(0)
+        return (GAME_CREATION_RETRY_BASE_DELAY_MS shl exponent)
+            .coerceAtMost(GAME_CREATION_RETRY_MAX_DELAY_MS)
     }
 
     private suspend fun gameMatches(
