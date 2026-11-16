@@ -113,10 +113,17 @@ class DatabaseConnection @Inject constructor(private val config: PuffinConfig) :
             filters += Filters.eq("_id", mapId)
         }
         if (gameName != null || mode != null) {
-            val doc = Document()
-            if (gameName != null) doc["name"] = gameName
-            if (mode != null) doc["mode"] = mode
-            filters += Filters.elemMatch("world.games", doc)
+            val gameFilters = mutableListOf<Bson>()
+            if (gameName != null) gameFilters += Filters.eq("name", gameName)
+            if (mode != null) {
+                gameFilters += Filters.or(
+                    Filters.eq("mode", mode),
+                    // A null or empty mode field means the map supports any game mode
+                    Filters.eq("mode", null),
+                    Filters.eq("mode", ""),
+                )
+            }
+            filters += Filters.elemMatch("world.games", Filters.and(gameFilters))
         }
         if (whitelistedPlayers != null) {
             val clause = mutableListOf<Bson>()

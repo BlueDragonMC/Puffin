@@ -84,7 +84,8 @@ class MapService @Inject constructor(
         return anvilFileMaps.filter { map ->
             (mapId == null || map.mapSource.mapId == mapId)
                     && map.games.any {
-                (gameName == null || it.name == gameName) && (mode == null || it.mode == null || it.mode == mode)
+                (gameName == null || it.name == gameName) &&
+                        (mode == null || it.mode.isNullOrBlank() || it.mode == mode)
             } && (map.whitelist == null || (whitelistedPlayers != null && map.whitelist!!.containsAll(whitelistedPlayers)))
         }
     }
