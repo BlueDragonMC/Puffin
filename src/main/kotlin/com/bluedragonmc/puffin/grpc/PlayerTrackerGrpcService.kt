@@ -5,6 +5,7 @@ import com.bluedragonmc.api.grpc.PlayerTrackerOuterClass
 import com.bluedragonmc.api.grpc.queryPlayerResponse
 import com.bluedragonmc.puffin.services.DatabaseConnection
 import com.bluedragonmc.puffin.services.IPlayerTracker
+import com.bluedragonmc.puffin.util.LogContext
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -25,8 +26,12 @@ class PlayerTrackerGrpcService @Inject constructor(
 
     override suspend fun playerLogin(request: PlayerTrackerOuterClass.PlayerLoginRequest): Empty = handleRPC {
         // Called when a player logs into a proxy.
-        logger.info("Login > ${request.username} (${request.uuid})")
-        playerTracker.setProxy(UUID.fromString(request.uuid), request.proxyPodName)
+        val uuid = UUID.fromString(request.uuid)
+        LogContext.with(LogContext.player(uuid, request.username)) {
+            logger.info("Login > ${request.username} (${request.uuid})")
+        }
+        playerTracker.setUsername(uuid, request.username)
+        playerTracker.setProxy(uuid, request.proxyPodName)
         return Empty.getDefaultInstance()
     }
 
@@ -45,17 +50,25 @@ class PlayerTrackerGrpcService @Inject constructor(
         }
 
         val oldState = playerTracker.handleLogout(uuid)
-        logger.info("Logout > ${request.username} $oldState")
+        LogContext.with(LogContext.player(uuid, request.username)) {
+            logger.info("Logout > ${request.username} $oldState")
+        }
         databaseConnection.evictCachesForPlayer(uuid)
 
         if (oldState?.gameId == null)
-            logger.warn("Player logged out without a recorded instance: uuid=$uuid")
+            LogContext.with(LogContext.player(uuid, request.username)) {
+                logger.warn("Player logged out without a recorded instance: uuid=$uuid")
+            }
 
         if (oldState?.proxyPodName == null)
-            logger.warn("Player logged out without a recorded proxy server: uuid=$uuid")
+            LogContext.with(LogContext.player(uuid, request.username)) {
+                logger.warn("Player logged out without a recorded proxy server: uuid=$uuid")
+            }
 
         if (oldState?.gameServerName == null)
-            logger.warn("Player logged out without a recorded game server: uuid=$uuid")
+            LogContext.with(LogContext.player(uuid, request.username)) {
+                logger.warn("Player logged out without a recorded game server: uuid=$uuid")
+            }
 
         return Empty.getDefaultInstance()
     }
@@ -65,7 +78,12 @@ class PlayerTrackerGrpcService @Inject constructor(
             // Called when a player changes instances on the same backend server.
             val uuid = UUID.fromString(request.uuid)
             playerTracker.handleInstanceChange(uuid, request.serverName, request.instanceId)
-            logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
+            LogContext.with(
+                LogContext.player(uuid, playerTracker.getPlayer(uuid)?.username) +
+                        LogContext.game(request.instanceId, server = request.serverName)
+            ) {
+                logger.info("Instance Change > Player ${request.uuid} switched to instance ${request.serverName}/${request.instanceId}")
+            }
             return Empty.getDefaultInstance()
         }
 
@@ -73,7 +91,12 @@ class PlayerTrackerGrpcService @Inject constructor(
         // Called when a player changes backend servers (including initial routing).
         val uuid = UUID.fromString(request.uuid)
         playerTracker.handleInstanceChange(uuid, request.newServerName, request.newInstance)
-        logger.info("Player Transfer > Player ${request.uuid} switched to instance ${request.newServerName}/${request.newInstance}")
+        LogContext.with(
+            LogContext.player(uuid, playerTracker.getPlayer(uuid)?.username) +
+                    LogContext.game(request.newInstance, server = request.newServerName)
+        ) {
+            logger.info("Player Transfer > Player ${request.uuid} switched to instance ${request.newServerName}/${request.newInstance}")
+        }
         return Empty.getDefaultInstance()
     }
 

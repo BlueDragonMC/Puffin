@@ -1,6 +1,7 @@
 package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.puffin.app.ApplicationScope
+import com.bluedragonmc.puffin.util.LogContext
 import com.bluedragonmc.puffin.util.Utils
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -25,7 +26,7 @@ interface IPartyManager {
     fun getMarathon(party: Party): Marathon?
     fun hasInvitation(party: Party, player: UUID): Boolean
     fun addMember(party: Party, player: UUID)
-    fun removeMember(party: Party, player: UUID)
+    fun removeMember(party: Party, player: UUID, reason: String = "left")
     fun setLeader(party: Party, newLeader: UUID)
     fun addInvitation(party: Party, player: UUID, job: Job)
     fun removeInvitation(party: Party, player: UUID)
@@ -52,6 +53,19 @@ class PartyManager @Inject constructor(
 
     private val partyUpdateCallbacks = mutableListOf<(action: String, id: String, party: Party?) -> Unit>()
 
+    private fun logPartyEvent(party: Party, message: String, player: UUID? = null) {
+        LogContext.with(
+            LogContext.party(
+                partyId = party.id,
+                size = party.members.size,
+                player = player,
+                username = player?.let { playerTracker.getPlayer(it)?.username },
+            )
+        ) {
+            logger.info(message)
+        }
+    }
+
     override fun start() {
         // React to logouts through PlayerTracker's callback rather than depending on it directly.
         playerTracker.registerLogoutCallback { onLogout(it) }
@@ -63,6 +77,7 @@ class PartyManager @Inject constructor(
     override fun createParty(leader: UUID) = synchronized(partyLock) {
         val party = Party(mutableListOf(leader), mutableMapOf(), leader)
         parties.add(party)
+        logPartyEvent(party, "Party created.", leader)
         notifyPartyUpdate("add", party.id, party)
         return@synchronized party
     }
@@ -79,7 +94,9 @@ class PartyManager @Inject constructor(
 
     /** Returns the player's plain username, with no formatting. */
     override suspend fun getPlainUsername(uuid: UUID): String =
-        databaseConnection.getPlayerName(uuid) ?: uuid.toString()
+        playerTracker.getPlayer(uuid)?.username
+            ?: databaseConnection.getPlayerName(uuid)
+            ?: uuid.toString()
 
     /** Returns the MiniMessage color used to display the player's name. */
     override suspend fun getPlayerColor(uuid: UUID): String =
@@ -94,20 +111,24 @@ class PartyManager @Inject constructor(
     override fun hasInvitation(party: Party, player: UUID) = synchronized(partyLock) { party.invitations.containsKey(player) }
 
     override fun addMember(party: Party, player: UUID) = synchronized(partyLock) {
-        party.members.add(player)
+        if (party.members.add(player)) logPartyEvent(party, "Party member joined.", player)
         party.invitations.remove(player)?.cancel()
         update(party)
     }
 
-    override fun removeMember(party: Party, player: UUID) = synchronized(partyLock) {
-        party.members.remove(player)
+    override fun removeMember(party: Party, player: UUID, reason: String) = synchronized(partyLock) {
+        if (party.members.remove(player)) logPartyEvent(party, "Party member $reason.", player)
         update(party)
     }
 
     override fun setLeader(party: Party, newLeader: UUID) = synchronized(partyLock) {
-        val changed = party.leader != newLeader
+        val oldLeader = party.leader
+        val changed = oldLeader != newLeader
         party.leader = newLeader
-        if (changed) update(party)
+        if (changed) {
+            logPartyEvent(party, "Party leader changed from $oldLeader to $newLeader.", newLeader)
+            update(party)
+        }
     }
 
     override fun addInvitation(party: Party, player: UUID, job: Job) = synchronized(partyLock) {
@@ -186,6 +207,7 @@ class PartyManager @Inject constructor(
             party.members.retainAll(onlineMembers)
             val recipients = party.members.toList()
             removed.forEach {
+                logPartyEvent(party, "Offline party member removed.", it)
                 playerTracker.sendChatAsync(recipients, message = {
                     Utils.surroundWithSeparators(
                         "<red><lang:puffin.party.player_logged_out:'${getUsername(it)}'>"
@@ -206,6 +228,7 @@ class PartyManager @Inject constructor(
                     )
                 })
                 party.leader = newLeader
+                logPartyEvent(party, "Party leader changed from $oldLeader to $newLeader.", newLeader)
             }
         }
 
@@ -225,6 +248,7 @@ class PartyManager @Inject constructor(
 
     private fun dissolve(party: Party) {
         if (party !in parties) return
+        logPartyEvent(party, "Party dissolved.")
         parties.remove(party)
         playerTracker.sendChatAsync(party.members.toList(), "<red><lang:puffin.party.disband.auto>")
         clearMarathon(party)
@@ -250,7 +274,7 @@ class PartyManager @Inject constructor(
             playerTracker.sendChatAsync(party.members.toList(), message = {
                 Utils.surroundWithSeparators("<red><lang:puffin.party.player_logged_out:'${player.name()}'>")
             })
-            party.members.remove(player)
+            if (party.members.remove(player)) logPartyEvent(party, "Party member logged out.", player)
             update(party)
         }
     }

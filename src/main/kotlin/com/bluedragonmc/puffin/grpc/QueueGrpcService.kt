@@ -35,13 +35,16 @@ class QueueGrpcService @Inject constructor(
             return@handleRPC Empty.getDefaultInstance()
         }
 
+        val partyMembers = party?.let { partyManager.getMembers(it) }
         val queuedPlayers = if (party != null && partyManager.getLeader(party) != playerUuid) {
             // Non-leader party members may only queue themselves (e.g. to go to the lobby)
             listOf(playerUuid)
         } else {
-            party?.let { partyManager.getMembers(it) } ?: listOf(playerUuid)
+            partyMembers ?: listOf(playerUuid)
         }
-        queueService.addToQueue(QueuedParty(queuedPlayers, request.gameType))
+        // Only correlate the queue entry with a party when the whole party was queued.
+        val partyId = party?.id?.takeIf { partyMembers?.size == queuedPlayers.size }
+        queueService.addToQueue(QueuedParty(queuedPlayers, request.gameType, partyId))
 
         return Empty.getDefaultInstance()
     }

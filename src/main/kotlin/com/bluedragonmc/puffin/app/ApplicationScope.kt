@@ -2,6 +2,8 @@ package com.bluedragonmc.puffin.app
 
 import com.google.inject.Singleton
 import kotlinx.coroutines.*
+import com.bluedragonmc.puffin.util.LogContext
+import kotlinx.coroutines.slf4j.MDCContext
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.CoroutineContext
 
@@ -26,7 +28,7 @@ class ApplicationScope : CoroutineScope {
         initialDelayMillis: Long = 0L,
         periodMillis: Long,
         action: suspend CoroutineScope.() -> Unit,
-    ): Job = launch(CoroutineName(name)) {
+    ): Job = launch(CoroutineName(name) + MDCContext(LogContext.task(name))) {
         if (initialDelayMillis > 0) delay(initialDelayMillis)
         while (isActive) {
             try {

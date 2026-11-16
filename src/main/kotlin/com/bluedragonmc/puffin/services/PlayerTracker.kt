@@ -6,6 +6,7 @@ import com.bluedragonmc.api.grpc.GsClientServiceGrpcKt
 import com.bluedragonmc.api.grpc.PlayerHolderOuterClass
 import com.bluedragonmc.api.grpc.sendChatRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
+import com.bluedragonmc.puffin.util.LogContext
 import com.google.inject.Inject
 import com.google.inject.Singleton
 import io.grpc.ManagedChannel
@@ -20,6 +21,7 @@ interface IPlayerTracker {
     fun getPlayersOnProxy(podName: String): List<UUID>
     fun getPlayersInGameServer(serverName: String): List<UUID>
     fun removePlayer(uuid: UUID): PlayerState?
+    fun setUsername(player: UUID, username: String?)
     fun setProxy(player: UUID, proxyPodName: String?)
     fun setServer(player: UUID, gameServerName: String?)
     suspend fun setGameId(player: UUID, gameId: String?)
@@ -82,11 +84,20 @@ class PlayerTracker @Inject constructor(
 
     override fun removePlayer(uuid: UUID) = withPlayers { players.remove(uuid) }
 
+    override fun setUsername(player: UUID, username: String?) = withPlayers {
+        players[player] = players[player]?.copy(username = username) ?: PlayerState(
+            proxyPodName = null,
+            gameServerName = null,
+            gameId = null,
+            username = username,
+        )
+    }
+
     override fun setProxy(player: UUID, proxyPodName: String?) = withPlayers {
         players[player] = players[player]?.copy(proxyPodName = proxyPodName) ?: PlayerState(
             proxyPodName = proxyPodName,
-            null,
-            null
+            gameServerName = null,
+            gameId = null,
         )
     }
 
@@ -191,8 +202,11 @@ class PlayerTracker @Inject constructor(
     }
 
     override suspend fun getChannelToPlayer(player: UUID): ManagedChannel? {
-        val serverName = getPlayer(player)?.gameServerName ?: run {
-            logger.warn("Failed to get server name of player $player (Can't get gRPC channel to the player's server)")
+        val state = getPlayer(player)
+        val serverName = state?.gameServerName ?: run {
+            LogContext.with(LogContext.player(player, state?.username)) {
+                logger.warn("Failed to get server name of player $player (Can't get gRPC channel to the player's server)")
+            }
             return null
         }
         return k8sServiceDiscovery.getChannelToServer(serverName)
@@ -205,14 +219,19 @@ class PlayerTracker @Inject constructor(
     }
 
     override suspend fun sendChat(player: UUID, message: String, chatType: ChatType) {
-        logger.info("Sending chat message (type {}) to player {}: '{}'", chatType, player, message)
+        val username = getPlayer(player)?.username
+        LogContext.with(LogContext.player(player, username)) {
+            logger.info("Sending chat message (type {}) to player {}: '{}'", chatType, player, message)
+        }
         val stub = getStubToPlayer(player)
         stub?.sendChat(sendChatRequest {
             this.playerUuid = player.toString()
             this.message = message
             this.chatType = chatType
         }) ?: run {
-            logger.warn("Failed to send chat message '$message' to player '$player'.")
+            LogContext.with(LogContext.player(player, username)) {
+                logger.warn("Failed to send chat message '$message' to player '$player'.")
+            }
         }
     }
 

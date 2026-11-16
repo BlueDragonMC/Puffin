@@ -2,6 +2,7 @@ package com.bluedragonmc.puffin.services
 
 import com.bluedragonmc.api.grpc.Transfer
 import com.bluedragonmc.puffin.app.PuffinConfig
+import com.bluedragonmc.puffin.util.LogContext
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -24,6 +25,7 @@ class PlayerTransferService @Inject constructor(
     private val queueService: IQueueService,
     private val k8sServiceDiscovery: IK8sServiceDiscovery,
     private val config: PuffinConfig,
+    private val playerTracker: IPlayerTracker? = null,
 ) : Service(), IPlayerTransferService {
 
     private data class PendingTransfer(
@@ -76,10 +78,15 @@ class PlayerTransferService @Inject constructor(
         )
         queueService.setDestination(player, request.gameId) // Reset the cache TTL
 
-        logger.info(
-            "Prepared transfer for $player from proxy '${request.proxyPodName}' " +
-                    "to ${request.serverName} (${address}:${port}) / ${request.gameId}"
-        )
+        LogContext.with(
+            LogContext.player(player, playerTracker?.getPlayer(player)?.username) +
+                    LogContext.game(request.gameId, server = request.serverName, proxy = request.proxyPodName)
+        ) {
+            logger.info(
+                "Prepared transfer for $player from proxy '${request.proxyPodName}' " +
+                        "to ${request.serverName} (${address}:${port}) / ${request.gameId}"
+            )
+        }
         return Transfer.PrepareTransferResponse.newBuilder()
             .setAccepted(true)
             .build()
@@ -94,7 +101,9 @@ class PlayerTransferService @Inject constructor(
 
         val server = queueService.getServer(pending.serverName)
         if (server == null || !server.ready || server.draining || server.terminating) {
-            logger.warn("Pending transfer for $player to '${pending.serverName}' is no longer available")
+            LogContext.with(LogContext.player(player, playerTracker?.getPlayer(player)?.username)) {
+                logger.warn("Pending transfer for $player to '${pending.serverName}' is no longer available")
+            }
             return Transfer.ConsumeTransferResponse.getDefaultInstance()
         }
         val address = server.address
@@ -104,10 +113,15 @@ class PlayerTransferService @Inject constructor(
 
         queueService.setDestination(player, pending.gameId) // Reset the cache TTL
 
-        logger.info(
-            "Consumed transfer for $player to ${pending.serverName} " +
-                    "($address:$port) / ${pending.gameId} (prepared by '${pending.proxyPodName}')"
-        )
+        LogContext.with(
+            LogContext.player(player, playerTracker?.getPlayer(player)?.username) +
+                    LogContext.game(pending.gameId, server = pending.serverName, proxy = pending.proxyPodName)
+        ) {
+            logger.info(
+                "Consumed transfer for $player to ${pending.serverName} " +
+                        "($address:$port) / ${pending.gameId} (prepared by '${pending.proxyPodName}')"
+            )
+        }
         return Transfer.ConsumeTransferResponse.newBuilder()
             .setFound(true)
             .setServerName(pending.serverName)
@@ -118,7 +132,9 @@ class PlayerTransferService @Inject constructor(
     }
 
     private fun rejectWithMessage(playerUuid: String, reason: String): Transfer.PrepareTransferResponse {
-        logger.warn("Rejected proxy transfer for player $playerUuid: $reason")
+        LogContext.with(LogContext.player(playerUuid)) {
+            logger.warn("Rejected proxy transfer for player $playerUuid: $reason")
+        }
         return Transfer.PrepareTransferResponse.newBuilder()
             .setAccepted(false)
             .setRejectionReason(reason)

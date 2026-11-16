@@ -9,6 +9,7 @@ import com.bluedragonmc.puffin.services.IPartyManager
 import com.bluedragonmc.puffin.services.IPlayerTracker
 import com.bluedragonmc.puffin.services.IQueueService
 import com.bluedragonmc.puffin.services.Party
+import com.bluedragonmc.puffin.util.LogContext
 import com.bluedragonmc.puffin.util.Utils
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
@@ -16,6 +17,7 @@ import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.slf4j.LoggerFactory
 import java.util.UUID
 
 /**
@@ -28,6 +30,8 @@ class PartyGrpcService @Inject constructor(
     private val queueService: IQueueService,
     private val applicationScope: ApplicationScope,
 ) : PartyServiceGrpcKt.PartyServiceCoroutineImplBase() {
+
+    private val logger = LoggerFactory.getLogger(PartyGrpcService::class.java)
 
     private suspend fun sendInvitationMessage(party: Party, invitee: UUID, inviter: UUID) {
         playerTracker.sendChatAsync(
@@ -96,6 +100,15 @@ class PartyGrpcService @Inject constructor(
         val uuid = UUID.fromString(request.playerUuid)
         val party = partyManager.partyOf(uuid)
         if (party != null) {
+            LogContext.with(
+                LogContext.party(
+                    partyId = party.id,
+                    player = uuid,
+                    username = playerTracker.getPlayer(uuid)?.username,
+                )
+            ) {
+                logger.info("Party chat message: {}", request.message)
+            }
             playerTracker.sendChatAsync(
                 partyManager.getMembers(party),
                 "<p3><lang:puffin.party.chat.prefix> <white>${partyManager.getUsername(uuid)}<gray>: <white>${request.message}"
@@ -136,7 +149,7 @@ class PartyGrpcService @Inject constructor(
             val party = partyManager.partyOf(partyOwner)
             if (party != null) {
                 if (partyManager.getMembers(party).contains(player)) {
-                    partyManager.removeMember(party, player)
+                    partyManager.removeMember(party, player, "kicked")
                     playerTracker.sendChat(
                         partyManager.getMembers(party),
                         Utils.surroundWithSeparators("<p2><lang:puffin.party.kick.success:'${partyManager.getUsername(player)}'>")

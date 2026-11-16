@@ -7,6 +7,7 @@ import com.bluedragonmc.api.grpc.instanceCreatedRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.util.GrpcChannels
+import com.bluedragonmc.puffin.util.LogContext
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.gson.reflect.TypeToken
 import com.google.inject.Inject
@@ -392,10 +393,19 @@ class GameServerManager @Inject constructor(
     }
 
     override suspend fun handleInstanceCreated(request: ServerTracking.InstanceCreatedRequest) {
-        logger.info(
-            "Game created: ${request.serverName}/${request.instanceUuid} " +
-                    "(${request.gameType.name}/${request.gameType.mapId}/${request.gameType.mode})"
-        )
+        LogContext.with(
+            LogContext.game(
+                gameId = request.instanceUuid,
+                game = request.gameType.name,
+                map = request.gameType.mapId,
+                server = request.serverName,
+            )
+        ) {
+            logger.info(
+                "Game created: ${request.serverName}/${request.instanceUuid} " +
+                        "(${request.gameType.name}/${request.gameType.mapId}/${request.gameType.mode})"
+            )
+        }
         if (queueService.getGame(request.instanceUuid) == null) {
             queueService.addGame(request.serverName, request.instanceUuid, request.gameType, request.gameState)
             notifyListeners(GameServerEvent.InstanceAdded(request.instanceUuid))
@@ -405,7 +415,14 @@ class GameServerManager @Inject constructor(
     }
 
     override suspend fun handleInstanceRemoved(request: ServerTracking.InstanceRemovedRequest) {
-        logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
+        LogContext.with(
+            LogContext.game(
+                gameId = request.instanceUuid,
+                server = request.serverName,
+            )
+        ) {
+            logger.info("Game removed: ${request.serverName}/${request.instanceUuid}")
+        }
         queueService.removeGame(request.serverName, request.instanceUuid)
         notifyListeners(GameServerEvent.InstanceRemoved(request.instanceUuid))
     }

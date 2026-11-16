@@ -7,6 +7,7 @@ import com.bluedragonmc.api.grpc.PlayerHolderGrpcKt
 import com.bluedragonmc.api.grpc.sendPlayerRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.PuffinConfig
+import com.bluedragonmc.puffin.util.LogContext
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
@@ -300,7 +301,18 @@ class QueueService @Inject constructor(
             val now = System.currentTimeMillis()
 
             fun sendPartyToInstance(party: QueuedParty, game: Game) {
-                logger.info("Sending queued party $party to game ${game.id}.")
+                val player = party.players.singleOrNull()
+                LogContext.with(
+                    LogContext.game(gameId = game.id, game = game.gameType.name) +
+                            LogContext.party(
+                                partyId = party.partyId,
+                                size = party.players.size,
+                                player = player,
+                                username = player?.let { playerTracker.getPlayer(it)?.username },
+                            )
+                ) {
+                    logger.info("Sending queued party $party to game ${game.id}.")
+                }
                 effectivePlayerCounts[game.id] =
                     effectivePlayerCounts.getOrDefault(game.id, game.playerCount) + party.players.size
                 party.players.forEach { player ->
@@ -423,7 +435,16 @@ class QueueService @Inject constructor(
                     it.nextCreationAttemptAt = requestTime + GAME_CREATION_WAIT_MS
                 }
                 jobs += applicationScope.launch {
-                    logger.info("Creating instance with game type ${game.gameType} on server $id.")
+                    LogContext.with(
+                        LogContext.game(
+                            gameId = game.id,
+                            game = game.gameType.name,
+                            map = mapSource.mapId,
+                            server = id,
+                        )
+                    ) {
+                        logger.info("Creating instance with game type ${game.gameType} on server $id.")
+                    }
                     val stub = k8sServiceDiscovery.getStubToServer(id) ?: run {
                         logger.warn("Couldn't get a channel to server $id to create an instance; will retry.")
                         recordCreationFailure(waitingParties)
@@ -650,13 +671,17 @@ class QueueService @Inject constructor(
                 (currentProxy != null && !k8sServiceDiscovery.isProxyReady(currentProxy))
 
         val channel = if (routeViaProxy) {
-            logger.info("Setting destination of player '$player' to game '$gameId'")
+            LogContext.with(LogContext.player(player, playerTracker.getPlayer(player)?.username) + LogContext.game(gameId)) {
+                logger.info("Setting destination of player '$player' to game '$gameId'")
+            }
             setDestination(player, gameId)
             currentProxy?.let { k8sServiceDiscovery.getChannelToProxy(it) }
         } else {
             playerTracker.getChannelToPlayer(player) // Send directly to the game server if we're routing the player between instances on the same server
         } ?: run {
-            logger.warn("Failed to initialize the correct channel to send player $player from $currentGameServer to $serverName/$gameId!")
+            LogContext.with(LogContext.player(player, playerTracker.getPlayer(player)?.username) + LogContext.game(gameId)) {
+                logger.warn("Failed to initialize the correct channel to send player $player from $currentGameServer to $serverName/$gameId!")
+            }
             return
         }
 

@@ -45,6 +45,8 @@ dependencies {
     implementation(libs.okhttp)
 
     implementation(libs.configurate.yaml)
+
+    implementation(libs.coroutines.slf4j)
 }
 
 tasks.test {

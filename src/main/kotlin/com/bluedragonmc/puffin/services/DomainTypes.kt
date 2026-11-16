@@ -49,7 +49,12 @@ class PodGameServer(
 /**
  * Where a player currently is: their proxy, game server, and instance.
  */
-data class PlayerState(val proxyPodName: String?, val gameServerName: String?, val gameId: String?)
+data class PlayerState(
+    val proxyPodName: String?,
+    val gameServerName: String?,
+    val gameId: String?,
+    val username: String? = null,
+)
 
 /**
  * A game server as tracked by the queue: its name, running games, and connection info.
@@ -81,7 +86,9 @@ data class Game(
  * A party waiting in the queue.
  */
 data class QueuedParty(
-    val players: List<UUID>, val gameType: CommonTypes.GameType
+    val players: List<UUID>,
+    val gameType: CommonTypes.GameType,
+    val partyId: String? = null,
 ) {
     /** Time (epoch milliseconds) when the party was added to the queue. */
     val queuedAt = System.currentTimeMillis()

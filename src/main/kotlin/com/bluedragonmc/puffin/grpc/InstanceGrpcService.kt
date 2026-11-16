@@ -7,6 +7,7 @@ import com.bluedragonmc.api.grpc.playerCountResponse
 import com.bluedragonmc.puffin.services.IGameServerManager
 import com.bluedragonmc.puffin.services.IPlayerTracker
 import com.bluedragonmc.puffin.services.IQueueService
+import com.bluedragonmc.puffin.util.LogContext
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -27,7 +28,9 @@ class InstanceGrpcService @Inject constructor(
 
     override suspend fun initGameServer(request: ServerTracking.InitGameServerRequest): Empty = handleRPC {
         // Called when a new game server starts up and sends a ping
-        logger.info("New game server started and pinged: ${request.serverName}")
+        LogContext.with(LogContext.server(request.serverName)) {
+            logger.info("New game server started and pinged: ${request.serverName}")
+        }
         return Empty.getDefaultInstance()
     }
 
