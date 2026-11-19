@@ -10,6 +10,7 @@ import com.google.inject.Singleton
 import com.google.protobuf.Empty
 import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
  * gRPC adapter that saves current song information while players transfer between servers.
@@ -39,7 +40,7 @@ class JukeboxGrpcService @Inject constructor(
     override suspend fun setSongQueue(request: JukeboxOuterClass.SetSongQueueRequest): Empty = handleRPC {
         val player = UUID.fromString(request.playerUuid)
         songCache.put(player, request.queue)
-        stubTo(request.playerUuid)?.setSongQueue(request) // Inform the player's server that their song queue has changed
+        stubTo(request.playerUuid)?.withDeadlineAfter(3, TimeUnit.SECONDS)?.setSongQueue(request) // Inform the player's server that their song queue has changed
         return Empty.getDefaultInstance()
     }
 }

@@ -702,7 +702,7 @@ class QueueService @Inject constructor(
             return
         }
         val stub = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
-        stub.sendPlayer(sendPlayerRequest {
+        stub.withDeadlineAfter(5, TimeUnit.SECONDS).sendPlayer(sendPlayerRequest {
             this.playerUuid = player.toString()
             this.serverName = serverName
             this.gameServerIp = address

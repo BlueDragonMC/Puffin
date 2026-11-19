@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 /** The first backoff applied after a failed pod watch. */
 private const val WATCH_INITIAL_BACKOFF_MS = 500L
@@ -320,10 +321,12 @@ class GameServerManager @Inject constructor(
 
     private suspend fun syncExistingServer(serverName: String) {
         val channel = k8sServiceDiscovery.getChannelToServer(serverName) ?: return
-        val playersResponse =
-            PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel).getPlayers(Empty.getDefaultInstance())
-        val instancesResponse =
-            GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
+        val playersResponse = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
+            .withDeadlineAfter(2, TimeUnit.SECONDS)
+            .getPlayers(Empty.getDefaultInstance())
+        val instancesResponse = GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel)
+            .withDeadlineAfter(2, TimeUnit.SECONDS)
+            .getInstances(Empty.getDefaultInstance())
 
         playerTracker.updateGameServerPlayers(serverName, playersResponse)
 
@@ -347,10 +350,12 @@ class GameServerManager @Inject constructor(
         // Wait for the server's gRPC port to become available
         try {
             val channel = k8sServiceDiscovery.getChannelToServer(serverName) ?: return
-            val playersResponse =
-                PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel).getPlayers(Empty.getDefaultInstance())
-            val instancesResponse =
-                GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel).getInstances(Empty.getDefaultInstance())
+            val playersResponse = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
+                .withDeadlineAfter(2, TimeUnit.SECONDS)
+                .getPlayers(Empty.getDefaultInstance())
+            val instancesResponse = GsClientServiceGrpcKt.GsClientServiceCoroutineStub(channel)
+                .withDeadlineAfter(2, TimeUnit.SECONDS)
+                .getInstances(Empty.getDefaultInstance())
 
             playerTracker.updateGameServerPlayers(serverName, playersResponse)
             logger.info("Found ${playersResponse.playersCount} players on server $serverName")

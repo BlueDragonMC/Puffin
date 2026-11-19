@@ -13,6 +13,7 @@ import io.grpc.ManagedChannel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 interface IPlayerTracker {
     fun getPlayer(uuid: UUID): PlayerState?
@@ -224,7 +225,7 @@ class PlayerTracker @Inject constructor(
             logger.info("Sending chat message (type {}) to player {}: '{}'", chatType, player, message)
         }
         val stub = getStubToPlayer(player)
-        stub?.sendChat(sendChatRequest {
+        stub?.withDeadlineAfter(3, TimeUnit.SECONDS)?.sendChat(sendChatRequest {
             this.playerUuid = player.toString()
             this.message = message
             this.chatType = chatType

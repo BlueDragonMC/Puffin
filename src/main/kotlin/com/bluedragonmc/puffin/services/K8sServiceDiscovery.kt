@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 interface IK8sServiceDiscovery {
     /**
@@ -125,7 +126,7 @@ class K8sServiceDiscovery @Inject constructor(
                     return@launch
                 }
                 val stub = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
-                val response = stub.getPlayers(Empty.getDefaultInstance())
+                val response = stub.withDeadlineAfter(2, TimeUnit.SECONDS).getPlayers(Empty.getDefaultInstance())
                 proxyPlayerListeners.forEach { it(podName, response) }
             }
         }

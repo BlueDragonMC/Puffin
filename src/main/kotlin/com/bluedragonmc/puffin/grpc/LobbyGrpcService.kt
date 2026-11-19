@@ -12,6 +12,7 @@ import com.bluedragonmc.puffin.services.placementCandidates
 import com.bluedragonmc.puffin.util.Utils.handleRPC
 import com.google.inject.Inject
 import com.google.inject.Singleton
+import java.util.concurrent.TimeUnit
 
 /**
  * gRPC adapter for finding (and starting) lobby instances.
@@ -61,7 +62,7 @@ class LobbyGrpcService @Inject constructor(
 
             val stub = k8sServiceDiscovery.getStubToServer(bestServer.name)
                 ?: return ServiceDiscovery.FindLobbyResponse.newBuilder().setFound(false).build()
-            val response = stub.createInstance(
+            val response = stub.withDeadlineAfter(5, TimeUnit.SECONDS).createInstance(
                 GsClient.CreateInstanceRequest.newBuilder()
                     .setGame(config.lobbyGameName)
                     .setMapSource(mapService.getAvailableMaps(config.lobbyGameName, null, null, null).random())
