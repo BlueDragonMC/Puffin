@@ -41,6 +41,8 @@ Environment variables:
 | `PUFFIN_GAMESERVER_GRPC_PORT`       | The port used to create gRPC channels to game servers                                                       | 50051                      |
 | `PUFFIN_PROXY_GRPC_PORT`            | The port used to create gRPC channels to proxy servers                                                      | 50051                      |
 | `PUFFIN_API_PORT`                   | The port used for the dashboard WebSocket API.                                                              | 8080                       |
+| `PUFFIN_HEALTH_PORT`                | The port used for Kubernetes health and readiness probes.                                                   | 8083                       |
+| `PUFFIN_DRAIN_DELAY_MS`             | How long a drain request waits before the process begins shutting down.                                     | 5000                       |
 | `PUFFIN_MAPS_PORT`                  | The port that the map service listens on for map data.                                                      | 8082                       |
 | `PUFFIN_SERVICE_HOST`               | The hostname used to build map download URLs (set automatically by Kubernetes).                             | The local machine hostname |
 
@@ -58,6 +60,7 @@ Puffin is composed of many different services:
 | Service Name          | Description                                                                                                               |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------|
 | ApiService            | Streams players, parties, servers, and instances to the dashboard over a WebSocket.                                       |
+| HealthService         | Serves Kubernetes health and readiness probes, and drains traffic before shutdown.                                         |
 | DatabaseConnection    | Connects to MongoDB and the LuckPerms API to fetch player names, UUIDs, colors, and map data. Caches responses in memory. |
 | GameServerManager     | Watches game server pods and keeps track of the instances running on each one.                                            |
 | JukeboxService        | Saves players' song queues while they transfer between servers.                                                           |

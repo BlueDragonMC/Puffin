@@ -53,6 +53,11 @@ class PuffinConfig {
 
     val apiServicePort = System.getenv("PUFFIN_API_PORT")?.toIntOrNull() ?: 8080
 
+    val healthPort = System.getenv("PUFFIN_HEALTH_PORT")?.toIntOrNull() ?: 8083
+
+    /** How long a drain request waits before the process begins shutting down. */
+    val drainDelayMillis = System.getenv("PUFFIN_DRAIN_DELAY_MS")?.toLongOrNull() ?: 5_000L
+
     val mapServiceHost = System.getenv("PUFFIN_SERVICE_HOST") ?: Inet4Address.getLocalHost().hostName
     val mapServicePort =
         System.getenv("PUFFIN_SERVICE_PORT_MAP_SERVICE")?.toIntOrNull()

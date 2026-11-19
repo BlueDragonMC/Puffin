@@ -18,6 +18,7 @@ import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.models.V1Pod
 import io.kubernetes.client.util.Watch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -81,6 +82,11 @@ class GameServerManager @Inject constructor(
 
     /** Guards all access to [pods] and [readyGameServers]. */
     private val stateMutex = Mutex()
+
+    /** Completed after the first successful reload of game server pods. */
+    private val initialSyncComplete = CompletableDeferred<Unit>()
+
+    suspend fun awaitInitialSync() = initialSyncComplete.await()
 
     private val pods = mutableListOf<V1Pod>()
     private val readyGameServers = mutableSetOf<String>()
@@ -165,6 +171,7 @@ class GameServerManager @Inject constructor(
         }
 
         updateDraining()
+        initialSyncComplete.complete(Unit)
     }
 
     private suspend fun watch() = withContext(Dispatchers.IO) {

@@ -13,6 +13,7 @@ import com.google.protobuf.Empty
 import io.grpc.ManagedChannel
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.models.V1PodList
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,6 +71,11 @@ class K8sServiceDiscovery @Inject constructor(
         .expireAfterAccess(Duration.ofMinutes(60))
         .build<String, String?>()
 
+    /** Completed after the first successful sync with the Kubernetes API. */
+    private val initialSyncComplete = CompletableDeferred<Unit>()
+
+    suspend fun awaitInitialSync() = initialSyncComplete.await()
+
     override fun start() {
         // Perform an initial sync immediately, then keep it up to date periodically.
         applicationScope.launch { periodicSync() }
@@ -108,6 +114,8 @@ class K8sServiceDiscovery @Inject constructor(
                         pod.status?.conditions?.any { it.type == "Ready" && it.status == "True" } == true
             }
             .mapNotNull { it.metadata?.name }
+
+        initialSyncComplete.complete(Unit)
 
         proxies.forEach { podName ->
             applicationScope.launch {

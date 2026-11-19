@@ -19,6 +19,7 @@ LABEL com.bluedragonmc.environment=dev
 EXPOSE 50051
 EXPOSE 8080
 EXPOSE 8082
+EXPOSE 8083
 WORKDIR /puffin
 COPY --from=build /work/build/thin-dist/lib /service/lib
 COPY --from=build /work/build/thin-dist/Puffin-*.jar /service/puffin.jar

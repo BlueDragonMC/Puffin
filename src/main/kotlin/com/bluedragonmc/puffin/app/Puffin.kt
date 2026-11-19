@@ -5,6 +5,7 @@ import com.bluedragonmc.puffin.services.*
 import com.bluedragonmc.puffin.util.GrpcChannels
 import com.google.inject.Guice
 import com.google.inject.Module
+import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 
 class Puffin {
@@ -38,6 +39,8 @@ class Puffin {
         val gameServerManager = injector.getInstance(GameServerManager::class.java)
         val mapService = injector.getInstance(MapService::class.java)
         val grpcServer = injector.getInstance(GrpcServer::class.java)
+        val healthService = injector.getInstance(HealthService::class.java)
+        healthService.start()
 
         // Register callbacks/listeners
         playerTracker.start()
@@ -52,8 +55,15 @@ class Puffin {
 
         grpcServer.start()
 
+        applicationScope.launch {
+            k8sServiceDiscovery.awaitInitialSync()
+            gameServerManager.awaitInitialSync()
+            healthService.markReady()
+        }
+
         Runtime.getRuntime().addShutdownHook(Thread({
             logger.info("Shutting down Puffin...")
+            healthService.markNotReady()
             // Cancel background tasks and tear down services
             grpcServer.close()
             mapService.close()
@@ -66,9 +76,10 @@ class Puffin {
             playerTracker.close()
             databaseConnection.close()
             grpcChannels.closeAll()
+            healthService.close()
         }, "Puffin shutdown"))
 
-        logger.info("Application fully started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
+        logger.info("Application started in ${(System.nanoTime() - start) / 1_000_000_000f}s.")
         grpcServer.awaitTermination()
     }
 }
