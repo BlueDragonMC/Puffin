@@ -13,6 +13,7 @@ import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
 import io.grpc.Deadline
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -467,6 +468,8 @@ class QueueService @Inject constructor(
                             )
                             recordCreationFailure(waitingParties)
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         logger.warn(
                             "Failed to create instance with game type ${game.gameType} on server $id; will retry.",

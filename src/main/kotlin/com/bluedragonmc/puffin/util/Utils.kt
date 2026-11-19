@@ -8,13 +8,16 @@ import org.slf4j.LoggerFactory
 
 object Utils {
 
+    @PublishedApi
+    internal val logger = LoggerFactory.getLogger(Utils::class.java)
+
     inline fun <R : Any> handleRPC(handler: () -> R): R {
         try {
             return handler()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            LoggerFactory.getLogger(this::class.java).error("An error occurred in an RPC handler:", e)
+            RpcErrors.log("An error occurred in an RPC handler", e, logger)
             throw e
         }
     }

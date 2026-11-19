@@ -3,6 +3,7 @@ package com.bluedragonmc.puffin.app
 import com.google.inject.Singleton
 import kotlinx.coroutines.*
 import com.bluedragonmc.puffin.util.LogContext
+import com.bluedragonmc.puffin.util.RpcErrors
 import kotlinx.coroutines.slf4j.MDCContext
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.CoroutineContext
@@ -18,10 +19,7 @@ class ApplicationScope : CoroutineScope {
 
     override val coroutineContext: CoroutineContext =
         Dispatchers.IO + job + CoroutineName("Puffin I/O") +
-            CoroutineExceptionHandler { context, throwable ->
-                val name = context[CoroutineName]?.name ?: "Puffin"
-                logger.error("Uncaught exception in '$name' coroutine", throwable)
-            }
+            RpcErrors.handler("Puffin I/O", logger)
 
     fun repeatingTask(
         name: String,
@@ -36,7 +34,7 @@ class ApplicationScope : CoroutineScope {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                logger.error("Error in scheduled task '$name'", e)
+                RpcErrors.log("Error in scheduled task '$name'", e, logger)
             }
             delay(periodMillis)
         }
