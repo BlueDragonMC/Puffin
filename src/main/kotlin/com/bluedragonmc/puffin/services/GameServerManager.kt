@@ -8,6 +8,7 @@ import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.util.GrpcChannels
 import com.bluedragonmc.puffin.util.LogContext
+import com.bluedragonmc.puffin.util.RpcErrors
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.gson.reflect.TypeToken
 import com.google.inject.Inject
@@ -138,7 +139,7 @@ class GameServerManager @Inject constructor(
                 if (!server.ready || server.terminating) continue
                 applicationScope.launch {
                     runCatching { syncExistingServer(server.name) }
-                        .onFailure { logger.warn("Failed to sync existing game server ${server.name}", it) }
+                        .onFailure { RpcErrors.log("Failed to sync existing game server ${server.name}", it, logger) }
                 }
             }
 
@@ -385,7 +386,7 @@ class GameServerManager @Inject constructor(
             syncAttempts.put(serverName, attempts + 1)
 
             if (attempts > 10) {
-                logger.warn("Failed to sync players and instances with server $serverName after 10 attempts.", e)
+                RpcErrors.log("Failed to sync players and instances with server $serverName after 10 attempts.", e, logger)
                 return
             }
 

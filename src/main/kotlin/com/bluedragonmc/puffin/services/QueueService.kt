@@ -8,6 +8,7 @@ import com.bluedragonmc.api.grpc.sendPlayerRequest
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.util.LogContext
+import com.bluedragonmc.puffin.util.RpcErrors
 import com.bluedragonmc.puffin.util.Utils
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
@@ -471,9 +472,10 @@ class QueueService @Inject constructor(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        logger.warn(
+                        RpcErrors.log(
                             "Failed to create instance with game type ${game.gameType} on server $id; will retry.",
-                            e
+                            e,
+                            logger
                         )
                         recordCreationFailure(waitingParties)
                     }
