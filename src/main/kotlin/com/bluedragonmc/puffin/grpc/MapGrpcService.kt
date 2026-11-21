@@ -30,8 +30,8 @@ class MapGrpcService @Inject constructor(
         ).build()
     }
 
-    override suspend fun updateMapConfig(request: Map.UpdateMapConfigRequest): Empty {
+    override suspend fun updateMapConfig(request: Map.UpdateMapConfigRequest): Empty = handleRPC {
         db.putMapConfig(request.mapId, request.configJson)
-        return Empty.getDefaultInstance()
+        return@handleRPC Empty.getDefaultInstance()
     }
 }

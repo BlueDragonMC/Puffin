@@ -126,8 +126,9 @@ class PlayerTrackerGrpcService @Inject constructor(
                     }
                 }
 
-                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.IDENTITY_NOT_SET -> error("No identity given!")
-                null -> error("No identity given!")
+                PlayerTrackerOuterClass.PlayerQueryRequest.IdentityCase.IDENTITY_NOT_SET ->
+                    throw IllegalArgumentException("No identity given")
+                null -> throw IllegalArgumentException("No identity given")
             }
         }
 }

@@ -168,7 +168,7 @@ class PartyGrpcService @Inject constructor(
         return Empty.getDefaultInstance()
     }
 
-    override suspend fun leaveParty(request: PartySvc.PartyLeaveRequest): Empty {
+    override suspend fun leaveParty(request: PartySvc.PartyLeaveRequest): Empty = handleRPC {
         val player = UUID.fromString(request.playerUuid)
         val party = partyManager.partyOf(player)
 
@@ -183,7 +183,7 @@ class PartyGrpcService @Inject constructor(
             playerTracker.sendChat(player, "<red><lang:puffin.party.not_found>")
         }
 
-        return Empty.getDefaultInstance()
+        return@handleRPC Empty.getDefaultInstance()
     }
 
     override suspend fun transferParty(request: PartySvc.PartyTransferRequest): Empty = handleRPC {
@@ -347,22 +347,22 @@ class PartyGrpcService @Inject constructor(
         return Empty.getDefaultInstance()
     }
 
-    override suspend fun recordCoinAward(request: PartySvc.RecordCoinAwardRequest): Empty {
+    override suspend fun recordCoinAward(request: PartySvc.RecordCoinAwardRequest): Empty = handleRPC {
         val uuid = UUID.fromString(request.playerUuid)
         val party = partyManager.partyOf(uuid)
 
         if (party == null || partyManager.getMarathon(party) == null) {
-            return Empty.getDefaultInstance()
+            return@handleRPC Empty.getDefaultInstance()
         }
 
         val leaderGameId = playerTracker.getPlayer(partyManager.getLeader(party))?.gameId
         if (request.gameId != leaderGameId) {
             playerTracker.sendChat(uuid, "<gray><lang:puffin.party.marathon.outside_points>")
-            return Empty.getDefaultInstance()
+            return@handleRPC Empty.getDefaultInstance()
         }
 
         partyManager.addMarathonPoints(party, uuid, request.coins)
 
-        return Empty.getDefaultInstance()
+        return@handleRPC Empty.getDefaultInstance()
     }
 }

@@ -1,5 +1,8 @@
 package com.bluedragonmc.puffin.util
 
+import io.grpc.Status
+import io.grpc.StatusException
+import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -15,6 +18,15 @@ object Utils {
         try {
             return handler()
         } catch (e: CancellationException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            logger.debug("Rejected RPC: invalid argument: {}", e.message)
+            throw Status.INVALID_ARGUMENT.withDescription(e.message).asRuntimeException()
+        } catch (e: StatusException) {
+            RpcErrors.log("A downstream RPC failed inside an RPC handler", e, logger)
+            throw e
+        } catch (e: StatusRuntimeException) {
+            RpcErrors.log("A downstream RPC failed inside an RPC handler", e, logger)
             throw e
         } catch (e: Exception) {
             RpcErrors.log("An error occurred in an RPC handler", e, logger)

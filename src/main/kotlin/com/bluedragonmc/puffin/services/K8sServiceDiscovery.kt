@@ -6,6 +6,7 @@ import com.bluedragonmc.api.grpc.PlayerHolderOuterClass
 import com.bluedragonmc.puffin.app.ApplicationScope
 import com.bluedragonmc.puffin.app.PuffinConfig
 import com.bluedragonmc.puffin.util.GrpcChannels
+import com.bluedragonmc.puffin.util.RpcErrors
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Inject
 import com.google.inject.Singleton
@@ -13,10 +14,7 @@ import com.google.protobuf.Empty
 import io.grpc.ManagedChannel
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.models.V1PodList
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
@@ -125,9 +123,17 @@ class K8sServiceDiscovery @Inject constructor(
                     logger.warn("Couldn't get channel to proxy $podName!")
                     return@launch
                 }
-                val stub = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
-                val response = stub.withDeadlineAfter(2, TimeUnit.SECONDS).getPlayers(Empty.getDefaultInstance())
-                proxyPlayerListeners.forEach { it(podName, response) }
+                try {
+                    val response = PlayerHolderGrpcKt.PlayerHolderCoroutineStub(channel)
+                        .withDeadlineAfter(2, TimeUnit.SECONDS)
+                        .getPlayers(Empty.getDefaultInstance())
+
+                    proxyPlayerListeners.forEach { it(podName, response) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    RpcErrors.log("Failed to sync players from proxy $podName", e, logger)
+                }
             }
         }
     }

@@ -49,7 +49,7 @@ class QueueGrpcService @Inject constructor(
         return Empty.getDefaultInstance()
     }
 
-    override suspend fun bulkAddToQueue(request: Queue.BulkAddToQueueRequest): Empty {
+    override suspend fun bulkAddToQueue(request: Queue.BulkAddToQueueRequest): Empty = handleRPC {
         for (request in request.requestsList) {
             val uuid = UUID.fromString(request.playerUuid)
             val party = partyManager.partyOf(uuid)
@@ -57,7 +57,7 @@ class QueueGrpcService @Inject constructor(
                 addToQueue(request)
             }
         }
-        return Empty.getDefaultInstance()
+        return@handleRPC Empty.getDefaultInstance()
     }
 
     override suspend fun getDestinationGame(request: GetDestinationRequest): GetDestinationResponse = handleRPC {
