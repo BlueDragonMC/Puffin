@@ -1,5 +1,6 @@
 package com.bluedragonmc.puffin.util
 
+import com.bluedragonmc.api.RpcRetryPolicy
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.inject.Singleton
@@ -30,7 +31,11 @@ class GrpcChannels {
     fun channelTo(addr: String, port: Int): ManagedChannel {
         return channels.get(ChannelKey(addr, port)) {
             logger.debug("Building managed channel with address '$addr' and port '$port'.")
-            ManagedChannelBuilder.forAddress(addr, port).usePlaintext().build()
+            ManagedChannelBuilder.forAddress(addr, port)
+                .usePlaintext()
+                .defaultServiceConfig(RpcRetryPolicy.serviceConfig)
+                .enableRetry()
+                .build()
         }
     }
 

@@ -458,6 +458,7 @@ class QueueService @Inject constructor(
                                 GsClient.CreateInstanceRequest.newBuilder()
                                     .setGame(game.gameType.name)
                                     .setMapSource(mapSource)
+                                    .setRequestId(UUID.randomUUID().toString())
                                     .apply { if (game.gameType.hasMode()) setMode(game.gameType.mode) }
                                     .build()
                             )
